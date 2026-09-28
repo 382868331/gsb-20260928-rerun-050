@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cart-control-research"
+version = "0.1.0"
+description = "Receding-horizon control experiments for a replaceable cart model"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.10",
+]
+
+[tool.setuptools]
+packages = ["cart_control"]
