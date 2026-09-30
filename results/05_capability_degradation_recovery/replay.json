@@ -1,0 +1,50 @@
+{
+  "name": "05_capability_degradation_recovery",
+  "initial_state": [
+    -2.0,
+    0.0
+  ],
+  "n_steps": 140,
+  "actuator_delay_steps": 2,
+  "cart": {
+    "u_max": 2.0,
+    "du_up_max": 4.0,
+    "du_down_max": 4.0
+  },
+  "fail_steps": [],
+  "capability_schedule": [
+    {
+      "step": 45,
+      "capability": {
+        "u_lo": -0.9,
+        "u_hi": 0.9,
+        "du_up": 1.2,
+        "du_down": 1.2,
+        "delay_steps": 4,
+        "direction": "both"
+      }
+    },
+    {
+      "step": 70,
+      "capability": {
+        "u_lo": -0.9,
+        "u_hi": 0.9,
+        "du_up": 1.2,
+        "du_down": 1.2,
+        "delay_steps": 4,
+        "direction": "decrease_only"
+      }
+    },
+    {
+      "step": 95,
+      "capability": {
+        "u_lo": -2.0,
+        "u_hi": 2.0,
+        "du_up": 4.0,
+        "du_down": 4.0,
+        "delay_steps": 2,
+        "direction": "both"
+      }
+    }
+  ]
+}

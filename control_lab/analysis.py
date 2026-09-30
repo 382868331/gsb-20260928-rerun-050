@@ -79,4 +79,27 @@ def summarize(df_steps: pd.DataFrame, diff: pd.DataFrame,
     if rate_down_bound is not None:
         summary["rate_down_violation"] = float(
             max(0.0, summary["max_u_decrease_magnitude"] - rate_down_bound))
+    if "cap_u_hi" in df_steps.columns:
+        # 运行期能力变化时，按每拍实际生效的能力边界核对
+        cap_hi = df_steps["cap_u_hi"].to_numpy(dtype=float)
+        cap_lo = df_steps["cap_u_lo"].to_numpy(dtype=float)
+        cap_up = df_steps["cap_du_up"].to_numpy(dtype=float)
+        cap_down = df_steps["cap_du_down"].to_numpy(dtype=float)
+        direction = df_steps["cap_direction"].astype(str).to_numpy()
+        rate_hi = np.where(direction == "decrease_only", 0.0, cap_up)
+        rate_lo = np.where(direction == "increase_only", 0.0, cap_down)
+        summary["action_bound_violation"] = float(max(
+            0.0, float(np.max(applied - cap_hi)), float(np.max(cap_lo - applied))))
+        summary["rate_up_violation"] = float(max(
+            0.0, float(np.max(du - rate_hi))))
+        summary["rate_down_violation"] = float(max(
+            0.0, float(np.max(-du - rate_lo))))
+        changed = (
+            (df_steps["cap_u_hi"].diff().fillna(0) != 0)
+            | (df_steps["cap_u_lo"].diff().fillna(0) != 0)
+            | (df_steps["cap_delay_steps"].diff().fillna(0) != 0)
+            | df_steps["cap_direction"].ne(df_steps["cap_direction"].shift())
+        )
+        changed.iloc[0] = False
+        summary["n_capability_changes"] = int(changed.sum())
     return summary

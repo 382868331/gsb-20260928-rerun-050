@@ -17,11 +17,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from control_lab.analysis import plan_vs_actual, summarize
+from control_lab.capability import ActuatorCapability
 from control_lab.config import CartConfig, MPCConfig
 from control_lab.controller import MPCController
 from control_lab.experiment import run_experiment
 from control_lab.plants import CartPlant
-from control_lab.replay import save_manifest
+from control_lab.replay import capability_change, save_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "results"
@@ -95,8 +96,13 @@ def plot_scenario(df: pd.DataFrame, plans: list[dict], cfg: CartConfig, title: s
     ax.plot(t, df["commanded_u"], color="tab:orange", ls="--", lw=1, alpha=0.7,
             label="controller commanded action")
     ax.plot(t, df["disturbance"], color="tab:red", alpha=0.5, label="disturbance d")
-    ax.axhline(cfg.u_max, color="gray", ls=":")
-    ax.axhline(-cfg.u_max, color="gray", ls=":")
+    if "cap_u_hi" in df.columns:
+        ax.step(t, df["cap_u_hi"], color="gray", ls=":", where="post",
+                label="capability bounds")
+        ax.step(t, df["cap_u_lo"], color="gray", ls=":", where="post")
+    else:
+        ax.axhline(cfg.u_max, color="gray", ls=":")
+        ax.axhline(-cfg.u_max, color="gray", ls=":")
     ax.set_ylabel("force")
     ax.set_xlabel("time [s]")
     ax.legend(fontsize=8, ncol=2)
@@ -172,6 +178,29 @@ def main() -> None:
         out_dir=OUT / "04_delay_asymmetric_rate_observation_loss",
     )
 
+    # 场景 5：运行期执行器能力下降与恢复。动作范围缩小 + 延迟增长 +
+    # 只能单向调节，缺观测与降级同时发生；恢复后平稳回到目标。
+    name5 = "05_capability_degradation_recovery"
+
+    def target5(step):
+        if step < 30:
+            return 0.0
+        if step < 100:
+            return 2.0
+        return -1.5
+
+    plant5 = CartPlant(cfg)
+    ctrl5 = MPCController(plant5, mpc_cfg)
+    log5 = run_experiment(
+        plant5, ctrl5, 140, np.array([-2.0, 0.0]),
+        target_fn=target5,
+        disturbance_fn=lambda s, o: 0.3 + 0.1 * np.sin(0.3 * s),
+        observation_available_fn=lambda s: not (72 <= s <= 77),
+        capability_fn=lambda s: capability_change(name5, s),
+        actuator_delay_steps=2,
+        out_dir=OUT / name5,
+    )
+
     for name, lg, title, scenario_cfg in [
         ("01_constant_disturbance", log,
          "Scenario 1: constant disturbance, receding-horizon replanning", cfg),
@@ -182,6 +211,8 @@ def main() -> None:
         ("04_delay_asymmetric_rate_observation_loss", log4,
          "Scenario 4: delay, asymmetric slew limits, disturbance and observation loss",
          strict_cfg),
+        (name5, log5,
+         "Scenario 5: runtime actuator capability degradation and recovery", cfg),
     ]:
         d = OUT / name
         df = lg.to_frame()

@@ -15,7 +15,8 @@
     "rms_plan_actual_error_v": 0.07843821705876235,
     "action_bound_violation": 0.0,
     "rate_up_violation": 0.0,
-    "rate_down_violation": 0.0
+    "rate_down_violation": 0.0,
+    "n_capability_changes": 0
   },
   "02_target_jump": {
     "n_steps": 120,
@@ -33,7 +34,8 @@
     "rms_plan_actual_error_v": 0.773381864956464,
     "action_bound_violation": 0.0,
     "rate_up_violation": 0.0,
-    "rate_down_violation": 0.0
+    "rate_down_violation": 0.0,
+    "n_capability_changes": 0
   },
   "03_planner_failure": {
     "n_steps": 120,
@@ -51,7 +53,8 @@
     "rms_plan_actual_error_v": 0.04997680245533323,
     "action_bound_violation": 0.0,
     "rate_up_violation": 0.0,
-    "rate_down_violation": 0.0
+    "rate_down_violation": 0.0,
+    "n_capability_changes": 0
   },
   "04_delay_asymmetric_rate_observation_loss": {
     "n_steps": 120,
@@ -69,6 +72,26 @@
     "rms_plan_actual_error_v": 0.6718546073458785,
     "action_bound_violation": 0.0,
     "rate_up_violation": 0.0,
-    "rate_down_violation": 0.0
+    "rate_down_violation": 0.0,
+    "n_capability_changes": 0
+  },
+  "05_capability_degradation_recovery": {
+    "n_steps": 140,
+    "n_fallback": 7,
+    "n_missing_observations": 6,
+    "n_recovery_conservative": 1,
+    "max_commanded_u": 2.0,
+    "max_applied_u": 2.0,
+    "max_abs_delta_u_per_step": 3.339076156717258,
+    "max_u_increase": 2.899999999996092,
+    "max_u_decrease_magnitude": 3.339076156717258,
+    "max_command_vs_applied_abs": 4.0,
+    "final_position_error": 0.13998112180476108,
+    "rms_plan_actual_error_x": 0.6730507271393315,
+    "rms_plan_actual_error_v": 0.8698546200210623,
+    "action_bound_violation": 0.0,
+    "rate_up_violation": 0.0,
+    "rate_down_violation": 0.0,
+    "n_capability_changes": 3
   }
 }

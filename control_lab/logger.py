@@ -8,6 +8,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .capability import ActuatorCapability
+
 
 class ExperimentLogger:
     """逐步记录控制器所见观测、真实观测、动作链路和完整预测。"""
@@ -37,8 +39,10 @@ class ExperimentLogger:
         cost: float,
         planned_states: np.ndarray,
         planned_actions: np.ndarray,
+        capability: ActuatorCapability | None = None,
+        capability_change: dict | None = None,
     ) -> None:
-        self.rows.append({
+        row = {
             "step": int(step),
             "time": step * self.dt,
             "x": float(actual_obs_before[0]),
@@ -60,8 +64,18 @@ class ExperimentLogger:
             "cost": float(cost) if np.isfinite(cost) else np.nan,
             "x_next": float(obs_after[0]),
             "v_next": float(obs_after[1]),
-        })
-        self.plans.append({
+        }
+        if capability is not None:
+            row.update({
+                "cap_u_lo": float(capability.u_lo),
+                "cap_u_hi": float(capability.u_hi),
+                "cap_du_up": float(capability.du_up),
+                "cap_du_down": float(capability.du_down),
+                "cap_delay_steps": int(capability.delay_steps),
+                "cap_direction": capability.direction,
+            })
+        self.rows.append(row)
+        plan_entry = {
             "step": int(step),
             "time": step * self.dt,
             "success": bool(success),
@@ -74,7 +88,12 @@ class ExperimentLogger:
             "applied_action": np.asarray(applied_action, dtype=float).tolist(),
             "planned_states": np.asarray(planned_states, dtype=float).tolist(),
             "planned_actions": np.asarray(planned_actions, dtype=float).tolist(),
-        })
+        }
+        if capability is not None:
+            plan_entry["capability"] = capability.to_dict()
+        if capability_change is not None:
+            plan_entry["capability_change"] = capability_change
+        self.plans.append(plan_entry)
 
     def to_frame(self) -> pd.DataFrame:
         return pd.DataFrame(self.rows)
@@ -88,4 +107,3 @@ class ExperimentLogger:
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(self.plans, f, ensure_ascii=False)
         return csv_path, json_path
-

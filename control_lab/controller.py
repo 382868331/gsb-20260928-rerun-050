@@ -13,6 +13,7 @@ import numpy as np
 from scipy.optimize import Bounds, LinearConstraint, minimize
 
 from .config import MPCConfig
+from .capability import ActuatorCapability
 from .plants.base import Plant
 
 
@@ -50,6 +51,37 @@ class MPCController:
         self.prev_action = self.plant.neutral_action()
         self.pending_actions = []
         self._warm = np.zeros(self.n)
+
+    def set_capability(self, capability: ActuatorCapability) -> None:
+        """执行器能力变化后更新硬约束，不再把旧执行能力当作当前能力。"""
+        self.u_lo, self.u_hi = capability.action_bounds()
+        self.du_lo, self.du_hi = capability.rate_bounds()
+        self._warm = np.clip(self._warm, float(self.u_lo[0]),
+                             float(self.u_hi[0]))
+
+    def assess_reachability(self, targets: list[float]) -> dict:
+        """在当前能力下说明哪些目标仍可达到。
+
+        小车保持任意位置需要稳态动作 u=0；若 0 不在当前动作范围内
+        （例如只能单向调节且范围不含 0），则无法长期保持任何定点目标。
+        """
+        lo, hi = float(self.u_lo[0]), float(self.u_hi[0])
+        rate_lo, rate_hi = float(self.du_lo[0]), float(self.du_hi[0])
+        can_hold = lo <= 0.0 <= hi
+        entries = []
+        for t in targets:
+            entries.append({
+                "target": float(t),
+                "reachable": bool(can_hold),
+                "reason": ("ok" if can_hold else
+                           "保持目标所需零动作超出当前动作范围"),
+            })
+        return {
+            "u_lo": lo, "u_hi": hi,
+            "du_lo": rate_lo, "du_hi": rate_hi,
+            "can_hold_steady_state": bool(can_hold),
+            "targets": entries,
+        }
 
     def _delay_steps(self) -> int:
         return min(len(self.pending_actions), self.n)

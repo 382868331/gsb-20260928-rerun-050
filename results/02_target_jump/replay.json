@@ -11,5 +11,6 @@
     "du_up_max": 4.0,
     "du_down_max": 4.0
   },
-  "fail_steps": []
+  "fail_steps": [],
+  "capability_schedule": []
 }

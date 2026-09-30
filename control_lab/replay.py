@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import CartConfig, MPCConfig
+from .capability import ActuatorCapability
 from .controller import MPCController
 from .experiment import run_experiment
 from .plants import CartPlant
@@ -31,6 +32,7 @@ class ReplaySpec:
     du_up_max: float = 4.0
     du_down_max: float = 4.0
     fail_steps: tuple[int, ...] = ()
+    capability_schedule: tuple[tuple[int, dict], ...] = ()
 
     def to_dict(self) -> dict:
         return {
@@ -44,6 +46,10 @@ class ReplaySpec:
                 "du_down_max": self.du_down_max,
             },
             "fail_steps": list(self.fail_steps),
+            "capability_schedule": [
+                {"step": s, "capability": c}
+                for s, c in self.capability_schedule
+            ],
         }
 
 
@@ -81,6 +87,12 @@ def target(name: str, step: int) -> float:
         if step < 75:
             return 3.0
         return -2.0
+    if name == "05_capability_degradation_recovery":
+        if step < 30:
+            return 0.0
+        if step < 100:
+            return 2.0
+        return -1.5
     raise KeyError(f"未知场景: {name}")
 
 
@@ -91,13 +103,25 @@ def disturbance(name: str, step: int, obs: np.ndarray) -> float:
         return 0.15 * np.sin(0.5 * step)
     if name == "04_delay_asymmetric_rate_observation_loss":
         return 0.6 + 0.1 * np.sin(0.2 * step)
+    if name == "05_capability_degradation_recovery":
+        return 0.3 + 0.1 * np.sin(0.3 * step)
     return 0.0
 
 
 def observation_available(name: str, step: int) -> bool:
     if name == "04_delay_asymmetric_rate_observation_loss":
         return not (45 <= step <= 52)
+    if name == "05_capability_degradation_recovery":
+        # 缺观测与单向调节降级同时发生
+        return not (72 <= step <= 77)
     return True
+
+
+def capability_change(name: str, step: int) -> ActuatorCapability | None:
+    schedule = dict(SPECS[name].capability_schedule)
+    if step in schedule:
+        return ActuatorCapability.from_dict(schedule[step])
+    return None
 
 
 SPECS = {
@@ -110,6 +134,19 @@ SPECS = {
     "04_delay_asymmetric_rate_observation_loss": ReplaySpec(
         "04_delay_asymmetric_rate_observation_loss", (-2.0, 0.0),
         delay_steps=3, du_up_max=0.8, du_down_max=2.5),
+    # 运行期执行器能力下降：t=4.5s 动作范围缩小且延迟增长，
+    # t=7.0s 退化为只能单向（减小）调节，t=9.5s 恢复正常能力。
+    "05_capability_degradation_recovery": ReplaySpec(
+        "05_capability_degradation_recovery", (-2.0, 0.0), n_steps=140,
+        delay_steps=2,
+        capability_schedule=(
+            (45, {"u_lo": -0.9, "u_hi": 0.9, "du_up": 1.2, "du_down": 1.2,
+                  "delay_steps": 4, "direction": "both"}),
+            (70, {"u_lo": -0.9, "u_hi": 0.9, "du_up": 1.2, "du_down": 1.2,
+                  "delay_steps": 4, "direction": "decrease_only"}),
+            (95, {"u_lo": -2.0, "u_hi": 2.0, "du_up": 4.0, "du_down": 4.0,
+                  "delay_steps": 2, "direction": "both"}),
+        )),
 }
 
 
@@ -134,6 +171,7 @@ def replay(spec_name: str, out_dir: str | Path | None = None) -> Path:
         target_fn=lambda s: target(spec.name, s),
         disturbance_fn=lambda s, o: disturbance(spec.name, s, o),
         observation_available_fn=lambda s: observation_available(spec.name, s),
+        capability_fn=(lambda s: capability_change(spec.name, s)),
         actuator_delay_steps=spec.delay_steps,
         out_dir=destination,
     )

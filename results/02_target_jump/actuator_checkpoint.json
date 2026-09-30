@@ -1,0 +1,16 @@
+{
+  "step": 119,
+  "delay_steps": 0,
+  "previous_applied": [
+    0.0030444099879184333
+  ],
+  "queue": [],
+  "capability": {
+    "u_lo": -2.0,
+    "u_hi": 2.0,
+    "du_up": 4.0,
+    "du_down": 4.0,
+    "delay_steps": 0,
+    "direction": "both"
+  }
+}
