@@ -1,4 +1,4 @@
-"""实验记录：逐步保存计划与执行的差异。"""
+"""实验记录：保存计划命令、设备实际动作与预测轨迹。"""
 
 from __future__ import annotations
 
@@ -10,26 +10,49 @@ import pandas as pd
 
 
 class ExperimentLogger:
-    """记录每一步：观测、目标、计划首动作、实际执行动作、扰动、
-    是否触发保守动作，以及完整预测轨迹（用于计划 vs 执行分析）。"""
+    """逐步记录控制器所见观测、真实观测、动作链路和完整预测。"""
 
     def __init__(self, dt: float):
         self.dt = dt
         self.rows: list[dict] = []
         self.plans: list[dict] = []
 
-    def record(self, step: int, obs_before: np.ndarray, target: float,
-               action: np.ndarray, disturbance: float, obs_after: np.ndarray,
-               success: bool, fallback_used: bool, reason: str, cost: float,
-               planned_states: np.ndarray, planned_actions: np.ndarray) -> None:
+    def record(
+        self,
+        step: int,
+        actual_obs_before: np.ndarray,
+        controller_obs: np.ndarray,
+        target: float,
+        commanded_action: np.ndarray,
+        applied_action: np.ndarray,
+        submitted_action: np.ndarray,
+        actuator_delay_steps: int,
+        disturbance: float,
+        obs_after: np.ndarray,
+        observation_available: bool,
+        observation_age: int,
+        success: bool,
+        fallback_used: bool,
+        reason: str,
+        cost: float,
+        planned_states: np.ndarray,
+        planned_actions: np.ndarray,
+    ) -> None:
         self.rows.append({
-            "step": step,
+            "step": int(step),
             "time": step * self.dt,
-            "x": float(obs_before[0]),
-            "v": float(obs_before[1]),
+            "x": float(actual_obs_before[0]),
+            "v": float(actual_obs_before[1]),
+            "x_used": float(controller_obs[0]),
+            "v_used": float(controller_obs[1]),
             "target": float(target),
-            "planned_u0": float(planned_actions.reshape(-1)[0]),
-            "applied_u": float(action[0]),
+            "planned_u0": float(commanded_action[0]),
+            "commanded_u": float(commanded_action[0]),
+            "submitted_u": float(submitted_action[0]),
+            "applied_u": float(applied_action[0]),
+            "actuator_delay_steps": int(actuator_delay_steps),
+            "observation_available": bool(observation_available),
+            "observation_age": int(observation_age),
             "disturbance": float(disturbance),
             "success": bool(success),
             "fallback": bool(fallback_used),
@@ -39,9 +62,16 @@ class ExperimentLogger:
             "v_next": float(obs_after[1]),
         })
         self.plans.append({
-            "step": step,
+            "step": int(step),
             "time": step * self.dt,
             "success": bool(success),
+            "fallback_used": bool(fallback_used),
+            "reason": reason,
+            "observation_available": bool(observation_available),
+            "observation_age": int(observation_age),
+            "commanded_action": np.asarray(commanded_action, dtype=float).tolist(),
+            "submitted_action": np.asarray(submitted_action, dtype=float).tolist(),
+            "applied_action": np.asarray(applied_action, dtype=float).tolist(),
             "planned_states": np.asarray(planned_states, dtype=float).tolist(),
             "planned_actions": np.asarray(planned_actions, dtype=float).tolist(),
         })
@@ -58,3 +88,4 @@ class ExperimentLogger:
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(self.plans, f, ensure_ascii=False)
         return csv_path, json_path
+

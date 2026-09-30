@@ -58,6 +58,16 @@ def test_only_first_action_executed_and_replan_changes_plan():
            np.linalg.norm(r1.action - r2.action) > 1e-6
 
 
+def test_delayed_prediction_uses_pending_action_before_new_command():
+    _, plant, ctrl = _setup(horizon=8)
+    ctrl.pending_actions = [np.array([0.0])]
+    plant.reset(np.array([1.0, 0.5]))
+    res = ctrl.plan(plant.get_observation(), 0.0)
+    assert res.success
+    assert np.isclose(res.planned_actions[0, 0], 0.0)
+    assert np.isclose(res.planned_actions[1, 0], res.action[0])
+
+
 def test_fallback_is_braking_and_respects_hard_constraints():
     cfg, plant, ctrl = _setup(horizon=10, max_iter=0)
     plant.reset(np.array([0.0, 1.5]))
@@ -86,3 +96,15 @@ def test_fallback_after_moving_action_respects_rate_limit():
     # 从 +2 起步，保守动作最大变化为 du_max=4，区间 [-2, 2] 内合法
     assert -2.0 - 1e-8 <= float(res.action[0]) <= 2.0 + 1e-8
     assert abs(float(res.action[0]) - 2.0) <= cfg.du_max + 1e-8
+
+
+def test_fallback_respects_asymmetric_rate_limits():
+    cfg = CartConfig(du_up_max=0.5, du_down_max=1.5)
+    plant = CartPlant(cfg)
+    ctrl = MPCController(plant, MPCConfig(horizon=10, max_iter=0))
+    ctrl.prev_action = np.array([1.0])
+    plant.reset(np.array([0.0, 1.0]))
+    res = ctrl.plan(plant.get_observation(), 0.0)
+    assert res.fallback_used
+    delta = float(res.action[0] - 1.0)
+    assert -cfg.du_down_max - 1e-8 <= delta <= cfg.du_up_max + 1e-8

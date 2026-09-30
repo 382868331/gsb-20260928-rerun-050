@@ -21,6 +21,7 @@ from control_lab.config import CartConfig, MPCConfig
 from control_lab.controller import MPCController
 from control_lab.experiment import run_experiment
 from control_lab.plants import CartPlant
+from control_lab.replay import save_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "results"
@@ -34,7 +35,7 @@ class FailureInjectingController(MPCController):
         self._step_count = 0
         self.fail_steps = fail_steps or set()
 
-    def plan(self, obs, target):
+    def plan(self, obs, target, **kwargs):
         current = self._step_count
         self._step_count += 1
         if current in self.fail_steps:
@@ -47,11 +48,11 @@ class FailureInjectingController(MPCController):
             orig_ctrl = module.minimize
             module.minimize = boom  # type: ignore[assignment]
             try:
-                return super().plan(obs, target)
+                return super().plan(obs, target, **kwargs)
             finally:
                 opt.minimize = orig  # type: ignore[assignment]
                 module.minimize = orig_ctrl  # type: ignore[assignment]
-        return super().plan(obs, target)
+        return super().plan(obs, target, **kwargs)
 
 
 def plot_scenario(df: pd.DataFrame, plans: list[dict], cfg: CartConfig, title: str, path: Path) -> None:
@@ -69,6 +70,10 @@ def plot_scenario(df: pd.DataFrame, plans: list[dict], cfg: CartConfig, title: s
     ax.plot(t, df["x"], color="tab:blue", lw=2, label="actual position x")
     ax.plot(t, df["target"], color="black", ls="--", lw=1.5, label="target")
     ax.fill_between(t, *cfg.x_bounds, color="gray", alpha=0.08)
+    missing = df[~df["observation_available"].astype(bool)]
+    if len(missing):
+        for _, row in missing.iterrows():
+            ax.axvspan(row["time"], row["time"] + cfg.dt, color="tab:red", alpha=0.12)
     fb = df[df["fallback"]]
     if len(fb):
         ax.scatter(fb["time"], fb["x"], color="red", zorder=5, label="plan failed (safe action)")
@@ -87,8 +92,8 @@ def plot_scenario(df: pd.DataFrame, plans: list[dict], cfg: CartConfig, title: s
 
     ax = axes[2]
     ax.plot(t, df["applied_u"], color="tab:purple", lw=2, label="applied action u")
-    ax.plot(t, df["planned_u0"], color="tab:orange", ls="--", lw=1, alpha=0.7,
-            label="planned first action (brake on failure)")
+    ax.plot(t, df["commanded_u"], color="tab:orange", ls="--", lw=1, alpha=0.7,
+            label="controller commanded action")
     ax.plot(t, df["disturbance"], color="tab:red", alpha=0.5, label="disturbance d")
     ax.axhline(cfg.u_max, color="gray", ls=":")
     ax.axhline(-cfg.u_max, color="gray", ls=":")
@@ -106,6 +111,7 @@ def main() -> None:
     OUT.mkdir(exist_ok=True)
     cfg = CartConfig()
     mpc_cfg = MPCConfig()
+    strict_cfg = CartConfig(du_up_max=0.8, du_down_max=2.5)
     n_steps = 120
     summaries = {}
 
@@ -140,17 +146,54 @@ def main() -> None:
                           disturbance_fn=lambda s, o: 0.0,
                           out_dir=OUT / "03_planner_failure")
 
-    for name, lg, title in [
-        ("01_constant_disturbance", log, "Scenario 1: constant disturbance, receding-horizon replanning"),
-        ("02_target_jump", log2, "Scenario 2: target jumps + mild periodic disturbance"),
-        ("03_planner_failure", log3, "Scenario 3: planner failure -> conservative braking"),
+    # 场景 4：持续扰动、固定 3 拍执行器延迟、连续 8 拍缺观测，
+    # 且动作增大/减小采用不同变化限制。
+    def target_strict_jump(step):
+        if step < 35:
+            return 0.0
+        if step < 75:
+            return 3.0
+        return -2.0
+
+    def disturbance_persistent(step, obs):
+        return 0.6 + 0.1 * np.sin(0.2 * step)
+
+    def obs_available_strict(step):
+        return not (45 <= step <= 52)
+
+    plant4 = CartPlant(strict_cfg)
+    ctrl4 = MPCController(plant4, mpc_cfg)
+    log4 = run_experiment(
+        plant4, ctrl4, n_steps, np.array([-2.0, 0.0]),
+        target_fn=target_strict_jump,
+        disturbance_fn=disturbance_persistent,
+        observation_available_fn=obs_available_strict,
+        actuator_delay_steps=3,
+        out_dir=OUT / "04_delay_asymmetric_rate_observation_loss",
+    )
+
+    for name, lg, title, scenario_cfg in [
+        ("01_constant_disturbance", log,
+         "Scenario 1: constant disturbance, receding-horizon replanning", cfg),
+        ("02_target_jump", log2,
+         "Scenario 2: target jumps + mild periodic disturbance", cfg),
+        ("03_planner_failure", log3,
+         "Scenario 3: planner failure -> conservative braking", cfg),
+        ("04_delay_asymmetric_rate_observation_loss", log4,
+         "Scenario 4: delay, asymmetric slew limits, disturbance and observation loss",
+         strict_cfg),
     ]:
         d = OUT / name
         df = lg.to_frame()
         diff = plan_vs_actual(d / "steps.csv", d / "plans.json")
         diff.to_csv(d / "plan_vs_actual.csv", index=False)
-        summaries[name] = summarize(df, diff)
-        plot_scenario(df, lg.plans, cfg, title, d / "plot.png")
+        summaries[name] = summarize(
+            df, diff, action_bound=scenario_cfg.u_max,
+            rate_up_bound=scenario_cfg.du_up_max,
+            rate_down_bound=scenario_cfg.du_down_max,
+        )
+        save_manifest(name, d)
+        plot_scenario(df, lg.plans, scenario_cfg, title, d / "plot.png")
 
     with open(OUT / "summary.json", "w", encoding="utf-8") as f:
         json.dump(summaries, f, ensure_ascii=False, indent=2)

@@ -1,0 +1,15 @@
+{
+  "name": "01_constant_disturbance",
+  "initial_state": [
+    -3.0,
+    0.0
+  ],
+  "n_steps": 120,
+  "actuator_delay_steps": 0,
+  "cart": {
+    "u_max": 2.0,
+    "du_up_max": 4.0,
+    "du_down_max": 4.0
+  },
+  "fail_steps": []
+}

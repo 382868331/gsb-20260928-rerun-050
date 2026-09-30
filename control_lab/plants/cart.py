@@ -75,6 +75,6 @@ class CartPlant(Plant):
 
     def action_rate_bounds(self) -> tuple[np.ndarray, np.ndarray]:
         return (
-            np.array([-self.cfg.du_max]),
-            np.array([self.cfg.du_max]),
+            np.array([-float(self.cfg.du_down_max)]),
+            np.array([float(self.cfg.du_up_max)]),
         )

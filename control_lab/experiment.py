@@ -1,15 +1,18 @@
 """滚动时域实验循环。
 
-每个周期：读取最新观测 -> 基于当前目标重新规划 -> 只执行计划第一步 ->
-真实对象（可能含扰动/饱和）前进一步 -> 记录。规划失败执行保守动作。
+控制器每个周期提交动作命令；执行器可能延迟该命令，并在命令真正生效时
+施加幅度与变化限制。观测短时缺失时，规划器只使用最后已知观测并输出
+明确标记的保守动作，不把旧预测当作当前计划。
 """
 
 from __future__ import annotations
+
 from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
 
+from .actuator import Actuator
 from .controller import MPCController
 from .logger import ExperimentLogger
 from .plants.base import Plant
@@ -17,6 +20,7 @@ from .plants.base import Plant
 DisturbanceFn = Callable[[int, np.ndarray], float]
 TargetFn = Callable[[int], float]
 ActionHook = Callable[[int, np.ndarray], np.ndarray]
+ObservationAvailableFn = Callable[[int], bool]
 
 
 def run_experiment(
@@ -27,31 +31,80 @@ def run_experiment(
     target_fn: TargetFn,
     disturbance_fn: DisturbanceFn | None = None,
     action_hook: ActionHook | None = None,
+    observation_available_fn: ObservationAvailableFn | None = None,
+    actuator_delay_steps: int = 0,
     out_dir: str | Path | None = None,
 ) -> ExperimentLogger:
     logger = ExperimentLogger(plant.dt)
-    obs = plant.reset(np.asarray(initial_state, dtype=float))
+    plant.reset(np.asarray(initial_state, dtype=float))
+    actual_obs = plant.get_observation()
+    last_known_obs = actual_obs.copy()
+    obs_age = 0
+    actuator = Actuator(plant, delay_steps=actuator_delay_steps)
     controller.reset()
+    controller.prev_action = actuator.previous_applied.copy()
+    controller.pending_actions = actuator.projected_pending()
 
     for step in range(n_steps):
         target = float(target_fn(step))
-        result = controller.plan(obs, target)
-        action = result.action.copy()
-        # action_hook 可用于注入“执行器异常”，例如强制规划失败路径测试
+        obs_available = (
+            True if observation_available_fn is None
+            else bool(observation_available_fn(step))
+        )
+        if obs_available:
+            controller_obs = actual_obs.copy()
+            effective_age = obs_age
+        else:
+            controller_obs = last_known_obs.copy()
+            effective_age = -1
+
+        result = controller.plan(
+            controller_obs, target,
+            observation_available=obs_available,
+            observation_age=effective_age,
+        )
+        commanded_action = result.action.copy()
+        submitted_action = commanded_action.copy()
         if action_hook is not None:
-            action = action_hook(step, action)
-        disturbance = 0.0 if disturbance_fn is None else float(disturbance_fn(step, obs))
-        obs_after = plant.step(action, np.array([disturbance]))
+            submitted_action = action_hook(step, submitted_action)
+
+        applied_action = actuator.submit(submitted_action)
+        controller.pending_actions = actuator.projected_pending()
+        disturbance = (
+            0.0 if disturbance_fn is None
+            else float(disturbance_fn(step, actual_obs))
+        )
+        obs_after = plant.step(applied_action, np.array([disturbance]))
 
         logger.record(
-            step, obs, target, action, disturbance, obs_after,
-            success=result.success, fallback_used=result.fallback_used,
-            reason=result.reason, cost=result.cost,
-            planned_states=result.planned_states, planned_actions=result.planned_actions,
+            step=step,
+            actual_obs_before=actual_obs,
+            controller_obs=controller_obs,
+            target=target,
+            commanded_action=commanded_action,
+            applied_action=applied_action,
+            submitted_action=submitted_action,
+            actuator_delay_steps=actuator_delay_steps,
+            disturbance=disturbance,
+            obs_after=obs_after,
+            observation_available=obs_available,
+            observation_age=effective_age,
+            success=result.success,
+            fallback_used=result.fallback_used,
+            reason=result.reason,
+            cost=result.cost,
+            planned_states=result.planned_states,
+            planned_actions=result.planned_actions,
         )
-        # 关键：即使执行动作被外部改变，下一周期规划也以真实上一动作为基准
-        controller.prev_action = action.copy()
-        obs = obs_after
+
+        # 下一周期的变化限制基准是设备真正施加的动作；延迟队列单独用于预测。
+        controller.prev_action = applied_action.copy()
+        actual_obs = obs_after
+        if obs_available:
+            last_known_obs = actual_obs.copy()
+            obs_age = 0
+        else:
+            obs_age += 1
 
     if out_dir is not None:
         logger.save(out_dir)

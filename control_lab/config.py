@@ -14,9 +14,17 @@ class CartConfig:
     mass: float = 1.0
     dt: float = 0.1
     u_max: float = 2.0          # 动作幅度限制 |u| <= u_max
-    du_max: float = 4.0         # 动作变化速度限制 |u[k]-u[k-1]|/步 <= du_max
+    du_max: float = 4.0         # 兼容旧配置：对称动作变化限制
+    du_up_max: float | None = None    # 动作增大时每步最大增量
+    du_down_max: float | None = None  # 动作减小时每步最大减量（正数）
     x_bounds: tuple[float, float] = (-10.0, 10.0)
     v_bounds: tuple[float, float] = (-5.0, 5.0)
+
+    def __post_init__(self) -> None:
+        if self.du_up_max is None:
+            object.__setattr__(self, "du_up_max", self.du_max)
+        if self.du_down_max is None:
+            object.__setattr__(self, "du_down_max", self.du_max)
 
 
 @dataclass(frozen=True)

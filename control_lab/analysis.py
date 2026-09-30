@@ -42,14 +42,29 @@ def plan_vs_actual(csv_path: str | Path, plans_path: str | Path, max_horizon: in
     return pd.DataFrame(records)
 
 
-def summarize(df_steps: pd.DataFrame, diff: pd.DataFrame) -> dict:
+def summarize(df_steps: pd.DataFrame, diff: pd.DataFrame,
+              action_bound: float | None = None,
+              rate_up_bound: float | None = None,
+              rate_down_bound: float | None = None) -> dict:
     """汇总约束满足、失败次数与预测偏差。"""
-    du = np.abs(np.diff(df_steps["applied_u"], prepend=df_steps["applied_u"].iloc[0]))
+    initial_applied = 0.0
+    applied = df_steps["applied_u"].to_numpy(dtype=float)
+    du = np.diff(applied, prepend=initial_applied)
     summary = {
         "n_steps": int(len(df_steps)),
         "n_fallback": int(df_steps["fallback"].sum()),
-        "max_applied_u": float(df_steps["applied_u"].abs().max()),
-        "max_abs_delta_u_per_step": float(du.max()),
+        "n_missing_observations": int((~df_steps["observation_available"]).sum()),
+        "n_recovery_conservative": int(
+            df_steps["reason"].str.startswith("observation_recovery_").sum()
+        ),
+        "max_commanded_u": float(df_steps["commanded_u"].abs().max()),
+        "max_applied_u": float(np.abs(applied).max()),
+        "max_abs_delta_u_per_step": float(np.abs(du).max()),
+        "max_u_increase": float(du.max()),
+        "max_u_decrease_magnitude": float(-du.min()),
+        "max_command_vs_applied_abs": float(
+            (df_steps["commanded_u"] - df_steps["applied_u"]).abs().max()
+        ),
         "final_position_error": float(abs(
             df_steps["x"].iloc[-1] - df_steps["target"].iloc[-1])),
         "rms_plan_actual_error_x": float(
@@ -57,4 +72,11 @@ def summarize(df_steps: pd.DataFrame, diff: pd.DataFrame) -> dict:
         "rms_plan_actual_error_v": float(
             np.sqrt(np.mean(diff.loc[diff["dim"] == "v", "error"] ** 2))) if len(diff) else 0.0,
     }
+    if action_bound is not None:
+        summary["action_bound_violation"] = float(max(0.0, summary["max_applied_u"] - action_bound))
+    if rate_up_bound is not None:
+        summary["rate_up_violation"] = float(max(0.0, summary["max_u_increase"] - rate_up_bound))
+    if rate_down_bound is not None:
+        summary["rate_down_violation"] = float(
+            max(0.0, summary["max_u_decrease_magnitude"] - rate_down_bound))
     return summary
