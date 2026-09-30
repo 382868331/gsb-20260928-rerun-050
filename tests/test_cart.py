@@ -38,3 +38,11 @@ def test_boundary_contract_shapes():
     assert lo.shape == hi.shape == (2,)
     assert ulo.shape == uhi.shape == dlo.shape == dhi.shape == (1,)
     assert np.all(lo < hi) and ulo[0] == -2.0 and uhi[0] == 2.0
+    # 方向不对称：增力斜率上界与减力（卸载）斜率下界幅度不同
+    assert abs(dhi[0] - 1.2) < 1e-12 and dlo[0] == -4.0
+
+
+def test_asymmetric_slew_bounds_configurable():
+    plant = CartPlant(CartConfig(du_inc_max=0.8, du_dec_max=2.0))
+    dlo, dhi = plant.action_rate_bounds()
+    assert dhi[0] == 0.8 and dlo[0] == -2.0

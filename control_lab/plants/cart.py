@@ -74,7 +74,8 @@ class CartPlant(Plant):
         )
 
     def action_rate_bounds(self) -> tuple[np.ndarray, np.ndarray]:
+        # 方向不对称：下界（减力/卸载方向）与上界（增力方向）幅度不同。
         return (
-            np.array([-self.cfg.du_max]),
-            np.array([self.cfg.du_max]),
+            np.array([-self.cfg.du_dec_max]),
+            np.array([self.cfg.du_inc_max]),
         )
