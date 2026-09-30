@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from control_lab.analysis import plan_vs_actual, summarize
 from control_lab.config import CartConfig, MPCConfig
 from control_lab.controller import MPCController
+from control_lab.capability import Capability
 from control_lab.experiment import run_experiment
 from control_lab.plants import CartPlant
 from control_lab.replay import save_manifest
@@ -172,6 +173,37 @@ def main() -> None:
         out_dir=OUT / "04_delay_asymmetric_rate_observation_loss",
     )
 
+    # 场景 5：执行器能力在运行中收缩、延迟增长并短暂变成单向调节；
+    # 第一次能力变化与观测缺失同时发生，能力恢复后继续收敛到目标。
+    capability_cfg = CartConfig(du_up_max=0.9, du_down_max=1.2)
+
+    def target_capability(step):
+        return 2.0 if step >= 25 else 0.0
+
+    def obs_available_capability(step):
+        return not (40 <= step <= 45)
+
+    def capability_change(step):
+        if step == 40:
+            return Capability(-2.0, 1.2, 0.25, 0.35, delay_steps=4)
+        if step == 55:
+            return Capability(-1.2, 1.2, 0.0, 0.35, delay_steps=3)
+        if step == 60:
+            return Capability(-2.0, 2.0, 0.9, 1.2, delay_steps=2)
+        return None
+
+    plant5 = CartPlant(capability_cfg)
+    ctrl5 = MPCController(plant5, mpc_cfg)
+    log5 = run_experiment(
+        plant5, ctrl5, 160, np.array([-3.0, 0.0]),
+        target_fn=target_capability,
+        disturbance_fn=lambda s, o: 0.25,
+        observation_available_fn=obs_available_capability,
+        capability_change_fn=capability_change,
+        actuator_delay_steps=2,
+        out_dir=OUT / "05_runtime_capability_change",
+    )
+
     for name, lg, title, scenario_cfg in [
         ("01_constant_disturbance", log,
          "Scenario 1: constant disturbance, receding-horizon replanning", cfg),
@@ -182,6 +214,9 @@ def main() -> None:
         ("04_delay_asymmetric_rate_observation_loss", log4,
          "Scenario 4: delay, asymmetric slew limits, disturbance and observation loss",
          strict_cfg),
+        ("05_runtime_capability_change", log5,
+         "Scenario 5: runtime capability change with pending commands and lost observations",
+         capability_cfg),
     ]:
         d = OUT / name
         df = lg.to_frame()

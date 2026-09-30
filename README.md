@@ -7,16 +7,20 @@
 
 - `control_lab/plants/base.py`：被控对象统一接口（`step`/`predict`/边界）。
 - `control_lab/plants/cart.py`：人工小车 `m*x_ddot = u + d`（d 仅真实仿真存在）。
-- `control_lab/actuator.py`：执行器模型（固定 FIFO 延迟、动作幅度饱和、
-  动作增大/减小不对称变化限制）。
+- `control_lab/capability.py`：运行时执行器能力（动作范围、双向变化速率、
+  延迟和是否允许撤回）。
+- `control_lab/actuator.py`：执行器模型（FIFO 延迟、动作幅度饱和、方向不对称
+  变化限制、运行中能力变化和命令检查点）。
 - `control_lab/controller.py`：延迟感知有限时域 MPC；预测前几拍使用执行器队列
-  中尚未生效的旧命令。规划失败、观测缺失和观测恢复首拍输出明确保守动作。
+  中尚未生效的旧命令。能力变化后立即使用新约束和当前可达目标区间，规划失败、
+  观测缺失和观测恢复首拍输出明确保守动作。
 - `control_lab/experiment.py`：滚动时域闭环，分离规划命令、提交命令与设备实际
   施加动作；下一周期的变化限制以真实施加动作为基准。
 - `control_lab/logger.py` / `analysis.py`：逐步记录计划与执行并做差异分析。
 - `control_lab/replay.py`：内置场景重放清单与重放入口。
 - `experiments/run_scenarios.py`：持续扰动、目标突变、规划器故障，以及执行器延迟
-  + 不对称变化限制 + 连续丢观测的复合安全场景。
+  + 不对称变化限制 + 连续丢观测的复合安全场景，以及运行时能力收缩、延迟增长、
+  单向调节、观测缺失同时发生和能力恢复场景。
 - `tests/`：动力学、约束、保守动作、计划-执行差异等测试。
 
 ## 运行
@@ -36,6 +40,20 @@
 `reason=observation_missing` 表示缺观测保守刹车，恢复后的第一拍标记为
 `observation_recovery_age_<连续缺失拍数>`。汇总中的 `action_bound_violation`、
 `rate_up_violation`、`rate_down_violation` 必须为 0。
+
+场景 `05_runtime_capability_change` 额外记录运行时能力：
+
+- `plans.json` 中 `capability_event` 保存变化前后的能力、保留的排队命令 ID、
+  是否允许撤回，以及每条排队命令的 `due_step`（实际计划生效时刻）。
+- 同一周期的 `plan_before_capability_change` 保存能力变化前旧计划，变化后的
+  `planned_actions`/`planned_states` 使用当前能力重新计算，形成前后对照。
+- 默认不允许撤回已排队但未生效动作；延迟增长时插入中性动作并顺延旧命令，
+  延迟降低或范围恢复不会删除队列，旧命令仍按原 FIFO 顺序到点生效。
+- `capability` 中给出 `direction`、`target_attainable`、
+  `reachable_target_min/max`；当观测缺失与能力变化同时发生，仍只输出
+  `observation_missing` 保守动作，不把旧目标可达性当作当前可达性。
+- `actuator_state` 保存最后生效命令 ID 和仅含未生效命令的队列。续跑时恢复该
+  状态并提供对应的真实状态；已生效命令不会因保存/重开再次施加。
 
 ## 替换被控对象
 

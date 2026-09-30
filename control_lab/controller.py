@@ -13,6 +13,7 @@ import numpy as np
 from scipy.optimize import Bounds, LinearConstraint, minimize
 
 from .config import MPCConfig
+from .capability import Capability
 from .plants.base import Plant
 
 
@@ -27,6 +28,10 @@ class PlanResult:
     fallback_used: bool
     reason: str
     solver_status: dict = field(default_factory=dict)
+    capability: dict = field(default_factory=dict)
+    target_attainable: bool = True
+    reachable_target_min: float = -np.inf
+    reachable_target_max: float = np.inf
 
 
 class MPCController:
@@ -41,6 +46,7 @@ class MPCController:
         self.B = np.array([[0.0], [dt / plant.cfg.mass]])  # type: ignore[attr-defined]
         self.u_lo, self.u_hi = plant.action_bounds()
         self.du_lo, self.du_hi = plant.action_rate_bounds()
+        self.capability = Capability.from_plant(plant)
         self.prev_action = plant.neutral_action()
         self.pending_actions: list[np.ndarray] = []
         self.observation_recovery_steps = 1
@@ -50,6 +56,61 @@ class MPCController:
         self.prev_action = self.plant.neutral_action()
         self.pending_actions = []
         self._warm = np.zeros(self.n)
+
+    def update_capability(self, capability: Capability) -> None:
+        self.capability = capability
+        self.u_lo = np.array([capability.u_min])
+        self.u_hi = np.array([capability.u_max])
+        self.du_lo = np.array([-capability.du_down])
+        self.du_hi = np.array([capability.du_up])
+        self._warm = np.clip(self._warm, float(self.u_lo[0]), float(self.u_hi[0]))
+
+    def _reachable_interval(self, x0: np.ndarray) -> tuple[float, float]:
+        """保守计算当前时域末端位置可达区间；前缀队列不可撤回。"""
+        cap = self.capability
+        prefix = np.asarray(
+            self.pending_actions[:self.n], dtype=float
+        ).reshape(-1)
+        x_lo = x_hi = float(x0[0])
+        v_lo = v_hi = float(x0[1])
+        dt = float(self.plant.dt)
+        mass = float(self.plant.cfg.mass)  # type: ignore[attr-defined]
+        previous = float(self.prev_action[0])
+        for fixed in prefix:
+            u = float(np.clip(fixed, max(cap.u_min, previous - cap.du_down),
+                              min(cap.u_max, previous + cap.du_up)))
+            a = u / mass
+            x_lo += v_lo * dt + 0.5 * a * dt * dt
+            x_hi += v_hi * dt + 0.5 * a * dt * dt
+            v_lo += a * dt
+            v_hi += a * dt
+            previous = u
+
+        u_lo_value = u_hi_value = float(prefix[-1]) if len(prefix) else float(self.prev_action[0])
+        for _ in range(self.n - len(prefix)):
+            next_lo = max(cap.u_min, u_lo_value - cap.du_down)
+            next_hi = min(cap.u_max, u_hi_value + cap.du_up)
+            a_lo, a_hi = next_lo / mass, next_hi / mass
+            x_lo += v_lo * dt + 0.5 * a_lo * dt * dt
+            x_hi += v_hi * dt + 0.5 * a_hi * dt * dt
+            v_lo += a_lo * dt
+            v_hi += a_hi * dt
+            u_lo_value, u_hi_value = next_lo, next_hi
+        return x_lo, x_hi
+
+    def _annotate_reachability(self, result: PlanResult, x0: np.ndarray,
+                               target: float) -> PlanResult:
+        lo, hi = self._reachable_interval(x0)
+        result.reachable_target_min = lo
+        result.reachable_target_max = hi
+        result.target_attainable = lo - 1e-8 <= target <= hi + 1e-8
+        result.capability = {
+            **self.capability.to_dict(),
+            "target_attainable": result.target_attainable,
+            "reachable_target_min": float(lo),
+            "reachable_target_max": float(hi),
+        }
+        return result
 
     def _delay_steps(self) -> int:
         return min(len(self.pending_actions), self.n)
@@ -119,12 +180,13 @@ class MPCController:
         commands = np.full(self.n, u_brake)
         planned_actions = self._effective_actions(commands).reshape(-1, 1)
         planned_states = self._rollout(obs, commands)
-        return PlanResult(
+        result = PlanResult(
             success=False, action=np.array([u_brake]),
             planned_states=planned_states, planned_actions=planned_actions,
             target=target, cost=cost, fallback_used=True, reason=reason,
             solver_status=status,
         )
+        return self._annotate_reachability(result, obs, target)
 
     def conservative_action(self, obs: np.ndarray, target: float, reason: str) -> PlanResult:
         x0 = np.asarray(obs, dtype=float).reshape(2)
@@ -133,12 +195,13 @@ class MPCController:
         commands = np.full(self.n, u_brake)
         actions = self._effective_actions(commands).reshape(-1, 1)
         states = self._rollout(x0, commands)
-        return PlanResult(
+        result = PlanResult(
             success=False, action=np.array([u_brake]),
             planned_states=states, planned_actions=actions, target=target,
             cost=np.nan, fallback_used=True, reason=reason,
             solver_status={"conservative": True},
         )
+        return self._annotate_reachability(result, x0, target)
 
     def plan(self, obs: np.ndarray, target: float,
              observation_available: bool = True,
@@ -206,8 +269,9 @@ class MPCController:
 
         action = np.array([float(z[0])])
         self._warm = np.concatenate((z[1:], z[-1:]))
-        return PlanResult(
+        result = PlanResult(
             success=True, action=action, planned_states=states,
             planned_actions=actions, target=target, cost=float(res.fun),
             fallback_used=False, reason="ok", solver_status=status,
         )
+        return self._annotate_reachability(result, x0, target)

@@ -4,6 +4,7 @@ import numpy as np
 
 from control_lab.analysis import plan_vs_actual, summarize
 from control_lab.config import CartConfig, MPCConfig
+from control_lab.capability import Capability
 from control_lab.controller import MPCController
 from control_lab.experiment import run_experiment
 from control_lab.plants import CartPlant
@@ -136,3 +137,79 @@ def test_builtin_scenario_replay_writes_manifest(tmp_path):
     assert (destination / "plans.json").exists()
     assert (destination / "replay.json").exists()
     assert SPECS[name].delay_steps == 3
+
+
+def test_runtime_capability_change_keeps_queue_and_compares_plans(tmp_path):
+    changes = {
+        8: Capability(-1.5, 1.5, 0.2, 0.4, delay_steps=3),
+        16: Capability(-2.0, 2.0, 0.8, 1.0, delay_steps=2),
+    }
+    plant = CartPlant(CartConfig(du_up_max=0.8, du_down_max=1.0))
+    ctrl = MPCController(plant, MPCConfig(horizon=12))
+    log = run_experiment(
+        plant, ctrl, n_steps=30, initial_state=np.array([-2.0, 0.0]),
+        target_fn=lambda s: 1.0,
+        capability_change_fn=lambda s: changes.get(s),
+        actuator_delay_steps=2,
+        out_dir=tmp_path,
+    )
+    df = log.to_frame()
+    plans = json.loads((tmp_path / "plans.json").read_text())
+    event = plans[8]["capability_event"]
+
+    assert df.loc[8, "capability_changed"]
+    assert event["retained_command_ids"]
+    assert not event["withdraw_allowed"]
+    assert plans[8]["plan_before_capability_change"] is not None
+    assert plans[8]["capability"]["u_max"] == 1.5
+    assert plans[16]["capability"]["du_up"] == 0.8
+    assert df["applied_command_id"].is_unique
+
+
+def test_capability_change_with_missing_observation_remains_conservative(tmp_path):
+    plant = CartPlant(CartConfig(du_up_max=0.9, du_down_max=1.2))
+    ctrl = MPCController(plant, MPCConfig(horizon=12))
+    log = run_experiment(
+        plant, ctrl, n_steps=20, initial_state=np.array([0.0, 1.2]),
+        target_fn=lambda s: 0.0,
+        observation_available_fn=lambda s: s != 8,
+        capability_change_fn=lambda s: Capability(
+            -1.5, 1.5, 0.2, 0.3, delay_steps=3
+        ) if s == 8 else None,
+        actuator_delay_steps=2,
+        out_dir=tmp_path,
+    )
+    row = log.to_frame().loc[8]
+    plan = log.plans[8]
+    assert row["fallback"] and row["reason"] == "observation_missing"
+    assert plan["plan_before_capability_change"]["reason"] == "observation_missing"
+    assert row["effective_delay_steps"] == 3
+
+
+def test_resume_state_does_not_reapply_applied_queue_actions(tmp_path):
+    plant = CartPlant(CartConfig(du_up_max=0.8, du_down_max=1.0))
+    ctrl = MPCController(plant, MPCConfig(horizon=10))
+    log = run_experiment(
+        plant, ctrl, n_steps=8, initial_state=np.array([-2.0, 0.0]),
+        target_fn=lambda s: 1.0, actuator_delay_steps=2,
+        out_dir=tmp_path / "first",
+    )
+    state = log.plans[-1]["actuator_state"]
+    state_after_step7 = log.plans[6]["actuator_state"]
+    assert state_after_step7["last_applied_command_id"] == 6
+    assert all(
+        item["command_id"] > 6 for item in state_after_step7["queue"]
+    )
+
+    resumed_plant = CartPlant(CartConfig(du_up_max=0.8, du_down_max=1.0))
+    resumed_plant.reset(np.array([log.rows[6]["x_next"], log.rows[6]["v_next"]]))
+    resumed_ctrl = MPCController(resumed_plant, MPCConfig(horizon=10))
+    resumed = run_experiment(
+        resumed_plant, resumed_ctrl, n_steps=1,
+        initial_state=np.array([log.rows[6]["x_next"], log.rows[6]["v_next"]]),
+        target_fn=lambda s: 1.0, actuator_delay_steps=2,
+        initial_step=7, resume_actuator_state=state_after_step7,
+        out_dir=tmp_path / "resumed",
+    )
+    assert resumed.rows[0]["applied_command_id"] == state["last_applied_command_id"]
+    assert resumed.rows[0]["applied_command_id"] > 6

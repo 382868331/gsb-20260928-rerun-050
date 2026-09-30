@@ -79,4 +79,27 @@ def summarize(df_steps: pd.DataFrame, diff: pd.DataFrame,
     if rate_down_bound is not None:
         summary["rate_down_violation"] = float(
             max(0.0, summary["max_u_decrease_magnitude"] - rate_down_bound))
+    if {"capability_u_min", "capability_u_max"}.issubset(df_steps.columns):
+        action_violation = float(np.maximum(
+            df_steps["capability_u_min"].to_numpy(float) - applied,
+            applied - df_steps["capability_u_max"].to_numpy(float),
+        ).max())
+        summary["action_bound_violation"] = 0.0 if action_violation < 1e-10 else action_violation
+    if {"capability_du_up", "capability_du_down"}.issubset(df_steps.columns):
+        rate_up_violation = float((
+            du - df_steps["capability_du_up"].to_numpy(float)
+        ).max())
+        rate_down_violation = float((
+            -du - df_steps["capability_du_down"].to_numpy(float)
+        ).max())
+        summary["rate_up_violation"] = 0.0 if rate_up_violation < 1e-10 else rate_up_violation
+        summary["rate_down_violation"] = 0.0 if rate_down_violation < 1e-10 else rate_down_violation
+    if "target_attainable" in df_steps.columns:
+        summary["n_target_unattainable_reports"] = int(
+            (~df_steps["target_attainable"].astype(bool)).sum()
+        )
+    if "capability_changed" in df_steps.columns:
+        summary["n_capability_changes"] = int(
+            df_steps["capability_changed"].astype(bool).sum()
+        )
     return summary

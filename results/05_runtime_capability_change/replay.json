@@ -1,0 +1,44 @@
+{
+  "name": "05_runtime_capability_change",
+  "initial_state": [
+    -3.0,
+    0.0
+  ],
+  "n_steps": 160,
+  "actuator_delay_steps": 2,
+  "cart": {
+    "u_max": 2.0,
+    "du_up_max": 0.9,
+    "du_down_max": 1.2
+  },
+  "fail_steps": [],
+  "capability_changes": [
+    {
+      "step": 40,
+      "u_min": -2.0,
+      "u_max": 1.2,
+      "du_up": 0.25,
+      "du_down": 0.35,
+      "delay_steps": 4,
+      "withdraw_allowed": false
+    },
+    {
+      "step": 55,
+      "u_min": -1.2,
+      "u_max": 1.2,
+      "du_up": 0.0,
+      "du_down": 0.35,
+      "delay_steps": 3,
+      "withdraw_allowed": false
+    },
+    {
+      "step": 60,
+      "u_min": -2.0,
+      "u_max": 2.0,
+      "du_up": 0.9,
+      "du_down": 1.2,
+      "delay_steps": 2,
+      "withdraw_allowed": false
+    }
+  ]
+}

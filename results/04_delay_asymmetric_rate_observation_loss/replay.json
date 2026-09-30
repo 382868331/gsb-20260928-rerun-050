@@ -11,5 +11,6 @@
     "du_up_max": 0.8,
     "du_down_max": 2.5
   },
-  "fail_steps": []
+  "fail_steps": [],
+  "capability_changes": []
 }
