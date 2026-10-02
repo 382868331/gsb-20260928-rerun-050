@@ -19,6 +19,7 @@ class QueuedCommand:
     action: np.ndarray
     submitted_step: int
     due_step: int
+    actuator: str = "a"
 
     def to_dict(self) -> dict:
         return {
@@ -26,37 +27,52 @@ class QueuedCommand:
             "action": np.asarray(self.action, dtype=float).tolist(),
             "submitted_step": int(self.submitted_step),
             "due_step": int(self.due_step),
+            "actuator": str(self.actuator),
         }
 
 
 class Actuator:
     def __init__(self, plant: Plant, delay_steps: int = 0,
-                 withdraw_allowed: bool = False):
+                 withdraw_allowed: bool = False,
+                 capability: Capability | None = None,
+                 name: str = "a",
+                 command_id_offset: int = 0):
         if delay_steps < 0:
             raise ValueError("delay_steps 必须非负")
         self.plant = plant
-        self.capability = Capability.from_plant(
-            plant, delay_steps, withdraw_allowed
-        )
+        self.name = str(name)
+        if capability is None:
+            self.capability = Capability.from_plant(
+                plant, delay_steps, withdraw_allowed
+            )
+        else:
+            self.capability = Capability(
+                float(capability.u_min), float(capability.u_max),
+                float(capability.du_up), float(capability.du_down),
+                int(capability.delay_steps), bool(capability.withdraw_allowed),
+            )
         neutral = np.asarray(plant.neutral_action(), dtype=float).copy()
         self.previous_applied = neutral.copy()
         self.last_applied_command_id = -1
         self.last_applied_due_step = -1
-        self._next_command_id = 0
+        self._next_command_id = int(command_id_offset)
         self._submit_count = 0
         self._queue: deque[QueuedCommand] = deque()
-        for due in range(delay_steps):
-            self._append(neutral.copy(), submitted_step=-delay_steps + due,
-                         due_step=due)
+        for due in range(self.capability.delay_steps):
+            self._append(
+                neutral.copy(),
+                submitted_step=-self.capability.delay_steps + due,
+                due_step=due,
+            )
 
     def reset(self) -> None:
         neutral = np.asarray(self.plant.neutral_action(), dtype=float).copy()
         self.previous_applied = neutral.copy()
         self.last_applied_command_id = -1
         self.last_applied_due_step = -1
+        current = self.capability
         self.capability = Capability.from_plant(
-            self.plant, self.capability.delay_steps,
-            self.capability.withdraw_allowed,
+            self.plant, current.delay_steps, current.withdraw_allowed
         )
         self._next_command_id = 0
         self._submit_count = 0
@@ -75,6 +91,7 @@ class Actuator:
             action=np.asarray(action, dtype=float).reshape(-1).copy(),
             submitted_step=int(submitted_step),
             due_step=int(due_step),
+            actuator=self.name,
         )
         self._next_command_id += 1
         self._queue.append(item)
@@ -89,6 +106,7 @@ class Actuator:
     def to_state(self) -> dict:
         return {
             "capability": self.capability.to_dict(),
+            "name": self.name,
             "previous_applied": self.previous_applied.tolist(),
             "next_command_id": int(self._next_command_id),
             "last_applied_command_id": int(self.last_applied_command_id),
@@ -99,6 +117,7 @@ class Actuator:
     def load_state(self, state: dict) -> None:
         data = self.capability.to_dict()
         data.update(state.get("capability", {}))
+        self.name = str(state.get("name", self.name))
         self.capability = Capability(
             float(data["u_min"]), float(data["u_max"]),
             float(data["du_up"]), float(data["du_down"]),
@@ -117,6 +136,7 @@ class Actuator:
                 np.asarray(item["action"], dtype=float),
                 int(item["submitted_step"]),
                 int(item["due_step"]),
+                str(item.get("actuator", self.name)),
             )
             for item in state.get("queue", [])
         )
@@ -160,6 +180,7 @@ class Actuator:
                     action=neutral.copy(),
                     submitted_step=step,
                     due_step=step + offset,
+                    actuator=self.name,
                 )
                 self._next_command_id += 1
                 shifted.append(item)
@@ -170,6 +191,7 @@ class Actuator:
                     action=item.action.copy(),
                     submitted_step=item.submitted_step,
                     due_step=item.due_step + delay_delta,
+                    actuator=item.actuator,
                 ))
             self._queue = shifted
 
