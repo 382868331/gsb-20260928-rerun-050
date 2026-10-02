@@ -1,0 +1,55 @@
+{
+  "name": "06_dual_actuator_coordination",
+  "kind": "dual",
+  "initial_state": [
+    -3.0,
+    0.0
+  ],
+  "n_steps": 140,
+  "actuator_delay_a": 1,
+  "actuator_delay_b": 3,
+  "cart": {
+    "u_max": 2.0,
+    "du_up_max": 1.0,
+    "du_down_max": 1.0
+  },
+  "recovery_ramp_steps": 6,
+  "capability_changes": [
+    {
+      "step": 0,
+      "actuator": "a",
+      "u_min": -0.8,
+      "u_max": 2.0,
+      "du_up": 0.6,
+      "du_down": 0.9,
+      "delay_steps": 1
+    },
+    {
+      "step": 0,
+      "actuator": "b",
+      "u_min": -2.0,
+      "u_max": 0.8,
+      "du_up": 0.9,
+      "du_down": 0.5,
+      "delay_steps": 3
+    },
+    {
+      "step": 50,
+      "actuator": "a",
+      "u_min": -0.8,
+      "u_max": 0.5,
+      "du_up": 0.15,
+      "du_down": 0.3,
+      "delay_steps": 2
+    },
+    {
+      "step": 85,
+      "actuator": "a",
+      "u_min": -0.8,
+      "u_max": 2.0,
+      "du_up": 0.6,
+      "du_down": 0.9,
+      "delay_steps": 1
+    }
+  ]
+}

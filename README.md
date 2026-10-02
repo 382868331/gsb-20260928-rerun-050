@@ -16,11 +16,18 @@
   观测缺失和观测恢复首拍输出明确保守动作。
 - `control_lab/experiment.py`：滚动时域闭环，分离规划命令、提交命令与设备实际
   施加动作；下一周期的变化限制以真实施加动作为基准。
+- `control_lab/dual_actuator.py` / `dual_controller.py` / `dual_experiment.py` /
+  `dual_logger.py`：双执行器协同。两台执行器能力、延迟与允许方向可不同，
+  各自保留独立的延迟队列（命令 ID 与生效时刻互不混用），施加动作叠加到
+  同一对象；联合 MPC 每周期输出协同计划与只用单台的对照计划；能力下降/
+  缺观测时按当前能力重新说明目标可达性与另一台可承担区间；方向冲突时
+  报告实际抵消量与未满足原因；能力恢复后按爬坡系数逐步重新分配，避免
+  两台同时补偿同一误差而超调。
 - `control_lab/logger.py` / `analysis.py`：逐步记录计划与执行并做差异分析。
 - `control_lab/replay.py`：内置场景重放清单与重放入口。
 - `experiments/run_scenarios.py`：持续扰动、目标突变、规划器故障，以及执行器延迟
   + 不对称变化限制 + 连续丢观测的复合安全场景，以及运行时能力收缩、延迟增长、
-  单向调节、观测缺失同时发生和能力恢复场景。
+  单向调节、观测缺失同时发生和能力恢复场景，以及双执行器协同场景。
 - `tests/`：动力学、约束、保守动作、计划-执行差异等测试。
 
 ## 运行
@@ -29,6 +36,7 @@
 .venv/bin/python -m pytest -q
 .venv/bin/python -m experiments.run_scenarios
 .venv/bin/python -c "from control_lab.replay import replay; replay('04_delay_asymmetric_rate_observation_loss', 'results/replay_04')"
+.venv/bin/python -c "from control_lab.replay import replay_dual; replay_dual('06_dual_actuator_coordination', 'results/replay_06')"
 ```
 
 场景结果写入 `results/<场景>/`：`steps.csv`（逐步记录）、`plans.json`（每周期完整
@@ -54,6 +62,22 @@
   `observation_missing` 保守动作，不把旧目标可达性当作当前可达性。
 - `actuator_state` 保存最后生效命令 ID 和仅含未生效命令的队列。续跑时恢复该
   状态并提供对应的真实状态；已生效命令不会因保存/重开再次施加。
+
+场景 `06_dual_actuator_coordination` 额外记录双执行器协同：
+
+- `steps.csv` 中 `commanded_u_a/b`、`applied_u_a/b`、`applied_u_total` 分别
+  表示每台命令、每台实际施加动作与总作用；`conflict`/`conflict_cancellation`
+  记录方向冲突与实际抵消量，`unmet_reason` 给出未满足原因
+  （`direction_conflict`/`target_unattainable`/保守动作原因）。
+- `plans.json` 中 `comparison` 保存只用 a、只用 b 的对照计划（另一台按
+  变化限制退回中性动作），`capability` 中 `single_a/b_reachable_min/max`
+  与 `single_a/b_attainable` 说明一台受限时另一台还能承担多少；
+  `recovery_ramp_factor` 记录能力恢复后的逐步放开系数。
+- `capability_event` 按执行器分别记录能力变化与各自保留的排队命令；
+  `actuator_state` 同时保存两条不同延迟的队列，保存/续跑发生在队列
+  中间时已生效命令不会重复施加。
+- 汇总中的 `a/b_action_bound_violation`、`a/b_rate_up/down_violation`
+  必须为 0。
 
 ## 替换被控对象
 

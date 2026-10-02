@@ -98,5 +98,24 @@
     "rate_down_violation": 0.0,
     "n_target_unattainable_reports": 11,
     "n_capability_changes": 3
+  },
+  "06_dual_actuator_coordination": {
+    "n_steps": 140,
+    "n_fallback": 7,
+    "n_missing_observations": 6,
+    "n_conflict_steps": 4,
+    "total_conflict_cancellation": 0.5364923684754989,
+    "max_applied_u_total": 2.8,
+    "n_target_unattainable_reports": 0,
+    "n_capability_changes": 3,
+    "final_position_error": 0.04580333696761141,
+    "a_action_bound_violation": 0.0,
+    "a_rate_up_violation": 0.0,
+    "a_rate_down_violation": 0.0,
+    "max_applied_u_a": 2.0,
+    "b_action_bound_violation": 0.0,
+    "b_rate_up_violation": 0.0,
+    "b_rate_down_violation": 0.0,
+    "max_applied_u_b": 2.0
   }
 }

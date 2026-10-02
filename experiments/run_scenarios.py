@@ -17,12 +17,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from control_lab.analysis import plan_vs_actual, summarize
+from control_lab.analysis import summarize_dual
 from control_lab.config import CartConfig, MPCConfig
 from control_lab.controller import MPCController
 from control_lab.capability import Capability
 from control_lab.experiment import run_experiment
 from control_lab.plants import CartPlant
-from control_lab.replay import save_manifest
+from control_lab.replay import run_dual, save_dual_manifest, save_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "results"
@@ -99,6 +100,70 @@ def plot_scenario(df: pd.DataFrame, plans: list[dict], cfg: CartConfig, title: s
     ax.axhline(cfg.u_max, color="gray", ls=":")
     ax.axhline(-cfg.u_max, color="gray", ls=":")
     ax.set_ylabel("force")
+    ax.set_xlabel("time [s]")
+    ax.legend(fontsize=8, ncol=2)
+    ax.grid(alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+
+
+def plot_dual_scenario(df: pd.DataFrame, plans: list[dict], cfg: CartConfig,
+                       title: str, path: Path) -> None:
+    t = df["time"]
+    fig, axes = plt.subplots(3, 1, figsize=(9, 9), sharex=True)
+
+    ax = axes[0]
+    for p in plans[::2]:
+        states = np.asarray(p["planned_states"])
+        tt = (p["step"] + np.arange(states.shape[0])) * cfg.dt
+        color = "tab:orange" if p["success"] else "tab:red"
+        ax.plot(tt, states[:, 0], color=color, alpha=0.12, lw=1)
+    ax.plot(t, df["x"], color="tab:blue", lw=2, label="actual position x")
+    ax.plot(t, df["target"], color="black", ls="--", lw=1.5, label="target")
+    missing = df[~df["observation_available"].astype(bool)]
+    if len(missing):
+        for _, row in missing.iterrows():
+            ax.axvspan(row["time"], row["time"] + cfg.dt,
+                       color="tab:red", alpha=0.12)
+    unattainable = df[~df["target_attainable"].astype(bool)]
+    if len(unattainable):
+        ax.scatter(unattainable["time"], unattainable["x"], color="red",
+                   zorder=5, label="target unattainable")
+    ax.set_ylabel("position")
+    ax.set_title(title)
+    ax.legend(loc="best", fontsize=8)
+    ax.grid(alpha=0.3)
+
+    ax = axes[1]
+    ax.plot(t, df["applied_u_a"], color="tab:blue", lw=1.8,
+            label="applied u_a (fast, positive-strong)")
+    ax.plot(t, df["applied_u_b"], color="tab:green", lw=1.8,
+            label="applied u_b (slow, negative-strong)")
+    ax.plot(t, df["applied_u_total"], color="tab:purple", lw=2,
+            label="total applied")
+    conflicts = df[df["conflict"].astype(bool)]
+    if len(conflicts):
+        ax.scatter(conflicts["time"], conflicts["applied_u_total"],
+                   color="red", zorder=5, label="direction conflict")
+    ax.axhline(cfg.u_max, color="gray", ls=":")
+    ax.axhline(-cfg.u_max, color="gray", ls=":")
+    ax.set_ylabel("force")
+    ax.legend(fontsize=8, ncol=2)
+    ax.grid(alpha=0.3)
+
+    ax = axes[2]
+    ax.plot(t, df["a_ramp_factor"], color="tab:blue", lw=1.5,
+            label="a recovery ramp factor")
+    ax.plot(t, df["conflict_cancellation"], color="tab:red", lw=1.5,
+            label="conflict cancellation")
+    ax.plot(t, df["disturbance"], color="tab:orange", alpha=0.6,
+            label="disturbance d")
+    changed = df[df["capability_changed"].astype(bool)]
+    for _, row in changed.iterrows():
+        ax.axvline(row["time"], color="gray", ls="--", alpha=0.6)
+    ax.set_ylabel("ramp / cancellation")
     ax.set_xlabel("time [s]")
     ax.legend(fontsize=8, ncol=2)
     ax.grid(alpha=0.3)
@@ -204,6 +269,14 @@ def main() -> None:
         out_dir=OUT / "05_runtime_capability_change",
     )
 
+    # 场景 6：双执行器协同。两台能力、延迟与允许方向不同；中途 a 能力
+    # 下降并伴随观测缺失，恢复后逐步重新分配；记录单台对照计划、每台
+    # 实际动作与方向冲突抵消量。
+    log6, dual_dir = run_dual(
+        "06_dual_actuator_coordination",
+        OUT / "06_dual_actuator_coordination",
+    )
+
     for name, lg, title, scenario_cfg in [
         ("01_constant_disturbance", log,
          "Scenario 1: constant disturbance, receding-horizon replanning", cfg),
@@ -229,6 +302,15 @@ def main() -> None:
         )
         save_manifest(name, d)
         plot_scenario(df, lg.plans, scenario_cfg, title, d / "plot.png")
+
+    dual_name = "06_dual_actuator_coordination"
+    df6 = log6.to_frame()
+    summaries[dual_name] = summarize_dual(df6)
+    save_dual_manifest(dual_name, dual_dir)
+    plot_dual_scenario(df6, log6.plans, cfg,
+                       "Scenario 6: dual-actuator coordination, degradation "
+                       "and gradual reallocation",
+                       dual_dir / "plot.png")
 
     with open(OUT / "summary.json", "w", encoding="utf-8") as f:
         json.dump(summaries, f, ensure_ascii=False, indent=2)

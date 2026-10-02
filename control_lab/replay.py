@@ -14,6 +14,8 @@ import numpy as np
 
 from .config import CartConfig, MPCConfig
 from .controller import MPCController
+from .dual_controller import DualMPCController
+from .dual_experiment import run_dual_experiment
 from .experiment import run_experiment
 from .capability import Capability
 from .plants import CartPlant
@@ -191,4 +193,149 @@ def save_manifest(spec_name: str, out_dir: str | Path) -> Path:
     path = Path(out_dir) / "replay.json"
     with open(path, "w", encoding="utf-8") as f:
         json.dump(SPECS[spec_name].to_dict(), f, ensure_ascii=False, indent=2)
+    return path
+
+
+@dataclass(frozen=True)
+class DualReplaySpec:
+    """双执行器场景：两台能力/延迟/允许方向不同，含能力下降与恢复。"""
+
+    name: str
+    initial_state: tuple[float, float]
+    n_steps: int
+    delay_a: int
+    delay_b: int
+    u_max: float
+    du_up_max: float
+    du_down_max: float
+    recovery_ramp_steps: int
+    capability_changes: tuple[tuple[int, str, float, float, float, float, int], ...]
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "kind": "dual",
+            "initial_state": list(self.initial_state),
+            "n_steps": self.n_steps,
+            "actuator_delay_a": self.delay_a,
+            "actuator_delay_b": self.delay_b,
+            "cart": {
+                "u_max": self.u_max,
+                "du_up_max": self.du_up_max,
+                "du_down_max": self.du_down_max,
+            },
+            "recovery_ramp_steps": self.recovery_ramp_steps,
+            "capability_changes": [
+                {
+                    "step": item[0],
+                    "actuator": item[1],
+                    "u_min": item[2],
+                    "u_max": item[3],
+                    "du_up": item[4],
+                    "du_down": item[5],
+                    "delay_steps": item[6],
+                }
+                for item in self.capability_changes
+            ],
+        }
+
+
+DUAL_SPECS = {
+    "06_dual_actuator_coordination": DualReplaySpec(
+        "06_dual_actuator_coordination",
+        initial_state=(-3.0, 0.0),
+        n_steps=140,
+        delay_a=1,
+        delay_b=3,
+        u_max=2.0,
+        du_up_max=1.0,
+        du_down_max=1.0,
+        recovery_ramp_steps=6,
+        capability_changes=(
+            # 两台分工：a 擅长正向快速调节，b 擅长负向、延迟更大
+            (0, "a", -0.8, 2.0, 0.6, 0.9, 1),
+            (0, "b", -2.0, 0.8, 0.9, 0.5, 3),
+            # a 能力下降且延迟增长，同时观测短暂缺失
+            (50, "a", -0.8, 0.5, 0.15, 0.3, 2),
+            # a 能力恢复：逐步重新分配，避免两台同时补偿同一误差
+            (85, "a", -0.8, 2.0, 0.6, 0.9, 1),
+        ),
+    ),
+}
+
+
+def dual_target(name: str, step: int) -> float:
+    if name == "06_dual_actuator_coordination":
+        return 2.0 if step >= 25 else 0.0
+    raise KeyError(f"未知双执行器场景: {name}")
+
+
+def dual_disturbance(name: str, step: int, obs: np.ndarray) -> float:
+    if name == "06_dual_actuator_coordination":
+        return 0.2 if step >= 40 else 0.0
+    return 0.0
+
+
+def dual_observation_available(name: str, step: int) -> bool:
+    if name == "06_dual_actuator_coordination":
+        return not (55 <= step <= 60)
+    return True
+
+
+def _dual_capability_change_fn(spec: DualReplaySpec):
+    schedule: dict[int, dict] = {}
+    for item in spec.capability_changes:
+        step, name = item[0], item[1]
+        schedule.setdefault(step, {})[name] = Capability(
+            item[2], item[3], item[4], item[5], item[6]
+        )
+
+    def change(step: int):
+        return schedule.get(step)
+
+    return change if schedule else None
+
+
+def run_dual(spec_name: str, out_dir: str | Path):
+    """按内置双执行器场景定义运行，返回 (logger, 输出目录)。"""
+    spec = DUAL_SPECS[spec_name]
+    cfg = CartConfig(
+        u_max=spec.u_max,
+        du_up_max=spec.du_up_max,
+        du_down_max=spec.du_down_max,
+    )
+    plant = CartPlant(cfg)
+    controller = DualMPCController(
+        plant, MPCConfig(), recovery_ramp_steps=spec.recovery_ramp_steps
+    )
+    destination = Path(out_dir)
+    logger = run_dual_experiment(
+        plant, controller, spec.n_steps,
+        np.asarray(spec.initial_state, dtype=float),
+        target_fn=lambda s: dual_target(spec.name, s),
+        disturbance_fn=lambda s, o: dual_disturbance(spec.name, s, o),
+        observation_available_fn=lambda s: dual_observation_available(
+            spec.name, s),
+        capability_change_fn=_dual_capability_change_fn(spec),
+        actuator_delay_a=spec.delay_a,
+        actuator_delay_b=spec.delay_b,
+        out_dir=destination,
+    )
+    return logger, destination
+
+
+def replay_dual(spec_name: str, out_dir: str | Path | None = None) -> Path:
+    destination = Path(out_dir) if out_dir is not None else RESULTS / spec_name
+    run_dual(spec_name, destination)
+    with open(destination / "replay.json", "w", encoding="utf-8") as f:
+        json.dump(DUAL_SPECS[spec_name].to_dict(), f,
+                  ensure_ascii=False, indent=2)
+    return destination
+
+
+def save_dual_manifest(spec_name: str, out_dir: str | Path) -> Path:
+    path = Path(out_dir) / "replay.json"
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(DUAL_SPECS[spec_name].to_dict(), f,
+                  ensure_ascii=False, indent=2)
     return path

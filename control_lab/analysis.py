@@ -103,3 +103,48 @@ def summarize(df_steps: pd.DataFrame, diff: pd.DataFrame,
             df_steps["capability_changed"].astype(bool).sum()
         )
     return summary
+
+
+def summarize_dual(df_steps: pd.DataFrame, diff: pd.DataFrame | None = None
+                   ) -> dict:
+    """双执行器实验汇总：每台约束满足、冲突抵消与目标可达报告。"""
+    summary = {
+        "n_steps": int(len(df_steps)),
+        "n_fallback": int(df_steps["fallback"].sum()),
+        "n_missing_observations": int(
+            (~df_steps["observation_available"]).sum()),
+        "n_conflict_steps": int(df_steps["conflict"].astype(bool).sum()),
+        "total_conflict_cancellation": float(
+            df_steps["conflict_cancellation"].sum()),
+        "max_applied_u_total": float(df_steps["applied_u_total"].abs().max()),
+        "n_target_unattainable_reports": int(
+            (~df_steps["target_attainable"].astype(bool)).sum()),
+        "n_capability_changes": int(
+            df_steps["capability_changed"].astype(bool).sum()),
+        "final_position_error": float(abs(
+            df_steps["x"].iloc[-1] - df_steps["target"].iloc[-1])),
+    }
+    for name in ("a", "b"):
+        applied = df_steps[f"applied_u_{name}"].to_numpy(dtype=float)
+        du = np.diff(applied, prepend=0.0)
+        bound_violation = float(np.maximum(
+            df_steps[f"{name}_u_min"].to_numpy(float) - applied,
+            applied - df_steps[f"{name}_u_max"].to_numpy(float),
+        ).max())
+        rate_up_violation = float(
+            (du - df_steps[f"{name}_du_up"].to_numpy(float)).max())
+        rate_down_violation = float(
+            (-du - df_steps[f"{name}_du_down"].to_numpy(float)).max())
+        summary[f"{name}_action_bound_violation"] = (
+            0.0 if bound_violation < 1e-10 else bound_violation)
+        summary[f"{name}_rate_up_violation"] = (
+            0.0 if rate_up_violation < 1e-10 else rate_up_violation)
+        summary[f"{name}_rate_down_violation"] = (
+            0.0 if rate_down_violation < 1e-10 else rate_down_violation)
+        summary[f"max_applied_u_{name}"] = float(np.abs(applied).max())
+    if diff is not None and len(diff):
+        summary["rms_plan_actual_error_x"] = float(np.sqrt(np.mean(
+            diff.loc[diff["dim"] == "x", "error"] ** 2)))
+        summary["rms_plan_actual_error_v"] = float(np.sqrt(np.mean(
+            diff.loc[diff["dim"] == "v", "error"] ** 2)))
+    return summary
