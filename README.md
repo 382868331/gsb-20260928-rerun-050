@@ -23,6 +23,43 @@
   单向调节、观测缺失同时发生和能力恢复场景。
 - `tests/`：动力学、约束、保守动作、计划-执行差异等测试。
 
+## 双执行器与命令回执不确定性
+
+两台能力、延迟、允许方向不同的执行器共同作用于同一目标，命令计划、设备接收
+与实际作用三层严格分开：
+
+- `control_lab/command_ledger.py`：每台执行器一本命令台账。命令状态为
+  `queued`/`in_flight`/`acked`/`uncertain`/`executed`/`not_applied`，使用者可
+  分别查看排队、已确认发生、明确未发生和尚不能确认的动作。回执只按原
+  `command_id` 归档：重复回执标记 `duplicate`，较旧命令的迟到回执不会写到新
+  命令上，与人工核实冲突的迟到回执标记 `superseded`；部分执行量保留为
+  `uncertain` 区间（`confirmed_value` 为已发生部分，`remaining_value` 为待
+  核实部分）。
+- `control_lab/device_channel.py`：真实设备侧（FIFO 延迟、限幅、断连、部分
+  执行）与 `ReceiptBus`（回执延迟、重复、丢失）。断连期间设备收不到命令，
+  重连时只补一条 `not_received` 回执，不自动重发。
+- `control_lab/dual_controller.py`：区间包络双执行器 MPC。已确认事实作为确定
+  量；尚不能确认的动作用“可能作用区间”传播（`possible_min/max`、
+  `envelope_states`），不压成精确预测值。每拍同时给出 `wait`（不确定通道冻结
+  等待、其余通道在自身能力内继续调节）与 `compensate`（最坏情形鲁棒可行才
+  补偿）两套方案，并输出目标是否仍可达、`cancellation_first_step`（两通道相反
+  作用的实际抵消量）、剩余误差与不能继续的原因。能力降低后按新约束重新核对
+  尚未发生的动作，已发生事实不回退。
+- `control_lab/actuator_group.py`：执行器组，串联通道与台账；只有人工/设备
+  确认未发生后才允许 `reschedule` 重新安排作用并记录替代命令 ID，确认发生后
+  迟到回执不产生重复补偿；`save_state/load_state` 保存不确定中途状态，恢复后
+  原命令与核实决定逐项对应。
+- `control_lab/dual_experiment.py` / `dual_logger.py`：双执行器闭环与记录，
+  `steps.csv` 含每台的计划/提交/实际作用及六种状态计数，`plans.json` 含每台
+  通道区间、两套方案、回执流水与全部命令记录。
+- `experiments/run_dual_scenarios.py`：场景 `06_dual_uncertain_receipt`（回执
+  丢失/重复/迟到/部分执行/断连重连）与 `07_dual_capability_manual`（能力收缩、
+  人工核实后重排、中途保存恢复）。
+
+```bash
+.venv/bin/python -m experiments.run_dual_scenarios
+```
+
 ## 运行
 
 ```bash
@@ -30,6 +67,10 @@
 .venv/bin/python -m experiments.run_scenarios
 .venv/bin/python -c "from control_lab.replay import replay; replay('04_delay_asymmetric_rate_observation_loss', 'results/replay_04')"
 ```
+
+原有单执行器五个场景与测试保持不变；`tests/test_dual.py` 覆盖双执行器回执
+丢失、重复/迟到归属、部分执行区间、等待/补偿、人工核实重排、能力重核、
+断连重连与中途保存恢复。
 
 场景结果写入 `results/<场景>/`：`steps.csv`（逐步记录）、`plans.json`（每周期完整
 预测）、`plan_vs_actual.csv`（预测 vs 真实）、`plot.png`、`replay.json`、

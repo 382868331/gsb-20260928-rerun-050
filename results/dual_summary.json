@@ -1,0 +1,36 @@
+{
+  "06_dual_uncertain_receipt": {
+    "name": "06_dual_uncertain_receipt",
+    "n_steps": 90,
+    "n_fallback": 0,
+    "final_position_error": 0.17184870082547676,
+    "max_applied_a": 2.0,
+    "max_applied_b": 1.2,
+    "max_cancellation_first_step": 3.2,
+    "max_residual_error_terminal": 8.522895498462116,
+    "n_uncertain_reports": 84,
+    "n_receipts_arrived": 357,
+    "n_duplicate_receipts": 1,
+    "b_min_violation": -0.0,
+    "a_bound_violation": 0.0
+  },
+  "07_dual_capability_manual": {
+    "name": "07_dual_capability_manual",
+    "n_steps": 120,
+    "n_fallback": 1,
+    "final_position_error": 0.09327805419759239,
+    "max_applied_a": 2.0,
+    "max_applied_b": 1.2,
+    "max_cancellation_first_step": 3.1999999999999984,
+    "max_residual_error_terminal": 6.592497307713565,
+    "n_uncertain_reports": 10,
+    "n_receipts_arrived": 478,
+    "n_duplicate_receipts": 0,
+    "b_min_violation": -0.0,
+    "a_bound_violation": 0.0,
+    "manual_events": [
+      "manual_executed:18",
+      "manual_not_applied:19->reschedule:30"
+    ]
+  }
+}
