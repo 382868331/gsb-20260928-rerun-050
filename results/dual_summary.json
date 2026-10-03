@@ -1,0 +1,82 @@
+{
+  "dual_01_lost_receipt_wait": {
+    "scenario": "dual_01_wait",
+    "steps": 60,
+    "final_residual_error": 3.193891321306985e-05,
+    "max_abs_residual": 1.494,
+    "total_cancellation": 2.489087944832827,
+    "steps_holding": 9,
+    "max_uncertain": 5,
+    "confirmed_not_applied": 0,
+    "unmet_reasons": [
+      "waiting_uncertain_confirmation"
+    ]
+  },
+  "dual_01_lost_receipt_compensate": {
+    "scenario": "dual_01_compensate",
+    "steps": 60,
+    "final_residual_error": -0.007444524580292322,
+    "max_abs_residual": 1.494,
+    "total_cancellation": 7.5779181367903785,
+    "steps_holding": 0,
+    "max_uncertain": 5,
+    "confirmed_not_applied": 0,
+    "unmet_reasons": [
+      "target_outside_reachable:[4.893,10.949] 不含 1.500",
+      "target_outside_reachable:[5.142,11.439] 不含 1.500",
+      "target_outside_reachable:[5.389,11.735] 不含 1.500",
+      "target_outside_reachable:[5.636,11.884] 不含 1.500",
+      "target_outside_reachable:[5.887,12.135] 不含 1.500",
+      "target_outside_reachable:[6.142,12.390] 不含 1.500",
+      "target_outside_reachable:[6.400,12.648] 不含 1.500",
+      "target_outside_reachable:[6.663,12.911] 不含 1.500",
+      "target_outside_reachable:[6.930,13.178] 不含 1.500"
+    ]
+  },
+  "dual_02_duplicate_partial_reconnect": {
+    "scenario": "dual_02",
+    "steps": 60,
+    "final_residual_error": 2.7960404419546947e-05,
+    "max_abs_residual": 0.994,
+    "total_cancellation": 0.7126986370320197,
+    "steps_holding": 3,
+    "max_uncertain": 4,
+    "confirmed_not_applied": 0,
+    "unmet_reasons": [
+      "waiting_uncertain_confirmation"
+    ]
+  },
+  "dual_03_capability_reduction_manual_confirm": {
+    "scenario": "dual_03",
+    "steps": 80,
+    "final_residual_error": -0.00011298194818376572,
+    "max_abs_residual": 2.994000000000004,
+    "total_cancellation": 4.675194987924649,
+    "steps_holding": 5,
+    "max_uncertain": 4,
+    "confirmed_not_applied": 4,
+    "unmet_reasons": [
+      "solver_failure",
+      "waiting_uncertain_confirmation"
+    ]
+  },
+  "dual_04_opposing_delays_cancellation": {
+    "scenario": "dual_04",
+    "steps": 80,
+    "final_residual_error": -0.003864988599505237,
+    "max_abs_residual": 3.9848687848203923,
+    "total_cancellation": 1.8501146502983201,
+    "steps_holding": 0,
+    "max_uncertain": 0,
+    "confirmed_not_applied": 0,
+    "unmet_reasons": []
+  },
+  "dual_05_snapshot_resume": {
+    "scenario": "dual_05",
+    "snapshot_step": 25,
+    "resumed_steps": 24,
+    "uncertain_at_snapshot": 5,
+    "decisions_at_snapshot": 19,
+    "max_position_deviation_after_resume": 0.0
+  }
+}

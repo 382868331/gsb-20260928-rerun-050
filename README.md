@@ -55,7 +55,46 @@
 - `actuator_state` 保存最后生效命令 ID 和仅含未生效命令的队列。续跑时恢复该
   状态并提供对应的真实状态；已生效命令不会因保存/重开再次施加。
 
+## 双执行器与不确定回执
+
+两台能力、延迟和允许方向不同的执行器共同作用于同一目标，命令计划、
+设备接收与实际作用分离记录：
+
+- \`control_lab/actuator_group.py\`：双执行器组，各自独立的 FIFO 延迟队列
+  与命令 ID；一个周期内每条命令只入队一次。
+- \`control_lab/dual_controller.py\`：双执行器有限时域 MPC，两台的幅度、
+  变化速率、延迟和允许方向分别作为硬约束；输出每台分担比例、相反作用
+  的抵消量与目标可达区间。
+- \`control_lab/receipts.py\`：回执台账。每条命令按 (执行器, 命令 ID)
+  归属，状态分为排队 / 已确认发生 / 明确未发生 / 尚不能确认。目标状态
+  已变化但回执未到的命令记为"尚不能确认"：不当作未执行重发，也不把
+  另一台的作用算成它的完成。重复回执保留首次归属，较旧回执晚于新命令
+  到达仍按命令 ID 归账，部分执行记录已作用量与明确未发生的差额，重连
+  后批量补报（resync）逐项对应。人工确认未发生后相应作用才允许重新
+  安排；确认发生则避免重复补偿。
+- \`control_lab/dual_experiment.py\`：双执行器滚动实验。对尚不能确认的
+  命令，计划记录给出当前作用力的可能区间与计划合力的上下界
+  （\`uncertainty.planned_total_min/max\`），不把不确定性藏进精确预测值。
+  \`strategy="wait"\` 保守等待（输出明确保守刹车动作）；
+  \`strategy="compensate"\` 把不确定命令可能的作用从能力中扣除后，只在
+  剩余能力范围内继续补偿。能力收缩后重新核对尚未发生的动作
+  （\`capability_event.recheck\`），已发生事实不回退。
+  \`snapshot_step\` + \`snapshot_path\` 在含不确定回执的中途保存，
+  \`resume_state\` 恢复后原命令与核实决定逐项对应，轨迹与连续运行一致。
+
+\`\`\`bash
+.venv/bin/python -m experiments.run_dual_scenarios
+\`\`\`
+
+场景写入 \`results/dual_*/\`：\`steps.csv\` 中 \`commanded_a/b\`、
+\`submitted_a/b\`、\`applied_a/b\` 分列计划、提交与实际作用，
+\`cancellation\` 为两台相反作用的实际抵消量，\`residual_error\` 为剩余
+误差，\`unmet_reason\` 说明不能继续的原因；\`plans.json\` 中
+\`ledger_view\` 给出每台执行器排队 / 已确认发生 / 明确未发生 /
+尚不能确认的动作清单。汇总见 \`results/dual_summary.json\`。
+
 ## 替换被控对象
+
 
 新对象实现 `control_lab.plants.base.Plant`：保持 `n_obs`/`n_act` 与
 `observation_bounds`/`action_bounds`/`action_rate_bounds` 语义一致，提供规划用

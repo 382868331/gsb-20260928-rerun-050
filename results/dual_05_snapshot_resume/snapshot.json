@@ -1,0 +1,1198 @@
+{
+  "step": 25,
+  "actual_obs": [
+    0.998231153659123,
+    0.004396548430679222
+  ],
+  "group": {
+    "names": [
+      "a",
+      "b"
+    ],
+    "actuators": {
+      "a": {
+        "capability": {
+          "u_min": -2.0,
+          "u_max": 2.0,
+          "du_up": 1.0,
+          "du_down": 1.0,
+          "delay_steps": 2,
+          "direction": "both",
+          "withdraw_allowed": false
+        },
+        "name": "a",
+        "previous_applied": [
+          -0.007276704433743053
+        ],
+        "next_command_id": 28,
+        "last_applied_command_id": 25,
+        "last_applied_due_step": 25,
+        "queue": [
+          {
+            "command_id": 26,
+            "action": [
+              -0.005846079983169722
+            ],
+            "submitted_step": 24,
+            "due_step": 26,
+            "actuator": "a"
+          },
+          {
+            "command_id": 27,
+            "action": [
+              -0.004694093755311084
+            ],
+            "submitted_step": 25,
+            "due_step": 27,
+            "actuator": "a"
+          }
+        ]
+      },
+      "b": {
+        "capability": {
+          "u_min": -1.0,
+          "u_max": 1.0,
+          "du_up": 0.6,
+          "du_down": 0.6,
+          "delay_steps": 0,
+          "direction": "both",
+          "withdraw_allowed": false
+        },
+        "name": "b",
+        "previous_applied": [
+          -0.0036369837362917714
+        ],
+        "next_command_id": 10000026,
+        "last_applied_command_id": 10000025,
+        "last_applied_due_step": 25,
+        "queue": []
+      }
+    }
+  },
+  "ledger": {
+    "actuator_names": [
+      "a",
+      "b"
+    ],
+    "records": [
+      {
+        "command_id": 2,
+        "actuator": "a",
+        "action": [
+          1.0
+        ],
+        "submitted_step": 0,
+        "due_step": 2,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          1.0
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 2,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 3,
+        "actuator": "a",
+        "action": [
+          1.0
+        ],
+        "submitted_step": 1,
+        "due_step": 3,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          1.0
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 3,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 4,
+        "actuator": "a",
+        "action": [
+          1.0
+        ],
+        "submitted_step": 2,
+        "due_step": 4,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          1.0
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 4,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 5,
+        "actuator": "a",
+        "action": [
+          0.28590088164336575
+        ],
+        "submitted_step": 3,
+        "due_step": 5,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          0.28590088164336575
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 5,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 6,
+        "actuator": "a",
+        "action": [
+          0.0
+        ],
+        "submitted_step": 4,
+        "due_step": 6,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          0.0
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 6,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 7,
+        "actuator": "a",
+        "action": [
+          0.0
+        ],
+        "submitted_step": 5,
+        "due_step": 7,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          0.0
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 7,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 8,
+        "actuator": "a",
+        "action": [
+          -0.7140991183566343
+        ],
+        "submitted_step": 6,
+        "due_step": 8,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          -0.7140991183566343
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 8,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 9,
+        "actuator": "a",
+        "action": [
+          -1.0
+        ],
+        "submitted_step": 7,
+        "due_step": 9,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          -1.0
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 9,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 10,
+        "actuator": "a",
+        "action": [
+          -1.0
+        ],
+        "submitted_step": 8,
+        "due_step": 10,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          -1.0
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 10,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 11,
+        "actuator": "a",
+        "action": [
+          -0.6099687370162445
+        ],
+        "submitted_step": 9,
+        "due_step": 11,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          -0.6099687370162445
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 11,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 12,
+        "actuator": "a",
+        "action": [
+          -0.28299643453926143
+        ],
+        "submitted_step": 10,
+        "due_step": 12,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          -0.28299643453926143
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 12,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 13,
+        "actuator": "a",
+        "action": [
+          -0.11764520376593629
+        ],
+        "submitted_step": 11,
+        "due_step": 13,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          -0.11764520376593629
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 13,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 14,
+        "actuator": "a",
+        "action": [
+          -0.05847505446752902
+        ],
+        "submitted_step": 12,
+        "due_step": 14,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          -0.05847505446752902
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 14,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 15,
+        "actuator": "a",
+        "action": [
+          -0.04600293127819952
+        ],
+        "submitted_step": 13,
+        "due_step": 15,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          -0.04600293127819952
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 15,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 16,
+        "actuator": "a",
+        "action": [
+          -0.04387247346536853
+        ],
+        "submitted_step": 14,
+        "due_step": 16,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          -0.04387247346536853
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 16,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 17,
+        "actuator": "a",
+        "action": [
+          -0.040907022513493235
+        ],
+        "submitted_step": 15,
+        "due_step": 17,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          -0.040907022513493235
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 17,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 18,
+        "actuator": "a",
+        "action": [
+          -0.03574980839496677
+        ],
+        "submitted_step": 16,
+        "due_step": 18,
+        "status": "uncertain",
+        "received_ack": false,
+        "applied_action": null,
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "",
+        "resolution_step": null,
+        "receipt_count": 0,
+        "duplicate_receipts": 0,
+        "late_receipt": false,
+        "note": "due_step 已过但未收到结果回执"
+      },
+      {
+        "command_id": 19,
+        "actuator": "a",
+        "action": [
+          -0.029383241567037588
+        ],
+        "submitted_step": 17,
+        "due_step": 19,
+        "status": "uncertain",
+        "received_ack": false,
+        "applied_action": null,
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "",
+        "resolution_step": null,
+        "receipt_count": 0,
+        "duplicate_receipts": 0,
+        "late_receipt": false,
+        "note": "due_step 已过但未收到结果回执"
+      },
+      {
+        "command_id": 20,
+        "actuator": "a",
+        "action": [
+          -0.02340875805074482
+        ],
+        "submitted_step": 18,
+        "due_step": 20,
+        "status": "uncertain",
+        "received_ack": false,
+        "applied_action": null,
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "",
+        "resolution_step": null,
+        "receipt_count": 0,
+        "duplicate_receipts": 0,
+        "late_receipt": false,
+        "note": "due_step 已过但未收到结果回执"
+      },
+      {
+        "command_id": 21,
+        "actuator": "a",
+        "action": [
+          -0.018473204605824425
+        ],
+        "submitted_step": 19,
+        "due_step": 21,
+        "status": "uncertain",
+        "received_ack": false,
+        "applied_action": null,
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "",
+        "resolution_step": null,
+        "receipt_count": 0,
+        "duplicate_receipts": 0,
+        "late_receipt": false,
+        "note": "due_step 已过但未收到结果回执"
+      },
+      {
+        "command_id": 22,
+        "actuator": "a",
+        "action": [
+          -0.014783000146033957
+        ],
+        "submitted_step": 20,
+        "due_step": 22,
+        "status": "uncertain",
+        "received_ack": false,
+        "applied_action": null,
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "",
+        "resolution_step": null,
+        "receipt_count": 0,
+        "duplicate_receipts": 0,
+        "late_receipt": false,
+        "note": "due_step 已过但未收到结果回执"
+      },
+      {
+        "command_id": 23,
+        "actuator": "a",
+        "action": [
+          -0.011638488775420319
+        ],
+        "submitted_step": 21,
+        "due_step": 23,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          -0.011638488775420319
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 23,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 24,
+        "actuator": "a",
+        "action": [
+          -0.009221522547092877
+        ],
+        "submitted_step": 22,
+        "due_step": 24,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          -0.009221522547092877
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 24,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 25,
+        "actuator": "a",
+        "action": [
+          -0.007276704433743053
+        ],
+        "submitted_step": 23,
+        "due_step": 25,
+        "status": "confirmed_applied",
+        "received_ack": false,
+        "applied_action": [
+          -0.007276704433743053
+        ],
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "receipt",
+        "resolution_step": 25,
+        "receipt_count": 1,
+        "duplicate_receipts": 0,
+        "late_receipt": true,
+        "note": ""
+      },
+      {
+        "command_id": 26,
+        "actuator": "a",
+        "action": [
+          -0.005846079983169722
+        ],
+        "submitted_step": 24,
+        "due_step": 26,
+        "status": "queued",
+        "received_ack": false,
+        "applied_action": null,
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "",
+        "resolution_step": null,
+        "receipt_count": 0,
+        "duplicate_receipts": 0,
+        "late_receipt": false,
+        "note": ""
+      },
+      {
+        "command_id": 27,
+        "actuator": "a",
+        "action": [
+          -0.004694093755311084
+        ],
+        "submitted_step": 25,
+        "due_step": 27,
+        "status": "queued",
+        "received_ack": false,
+        "applied_action": null,
+        "partial": false,
+        "deficit": 0.0,
+        "confirmed_by": "",
+        "resolution_step": null,
+        "receipt_count": 0,
+        "duplicate_receipts": 0,
+        "late_receipt": false,
+        "note": ""
+      }
+    ],
+    "orphan_receipts": [
+      {
+        "receipt": {
+          "actuator": "a",
+          "command_id": 0,
+          "applied_action": [
+            0.0
+          ],
+          "commanded_action": 0.0,
+          "step": 0,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000000,
+          "applied_action": [
+            0.6
+          ],
+          "commanded_action": 0.6,
+          "step": 0,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "a",
+          "command_id": 1,
+          "applied_action": [
+            0.0
+          ],
+          "commanded_action": 0.0,
+          "step": 1,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000001,
+          "applied_action": [
+            0.5095322600940391
+          ],
+          "commanded_action": 0.5095322600940391,
+          "step": 1,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000002,
+          "applied_action": [
+            0.805800543642314
+          ],
+          "commanded_action": 0.805800543642314,
+          "step": 2,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000003,
+          "applied_action": [
+            0.6303848754234481
+          ],
+          "commanded_action": 0.6303848754234481,
+          "step": 3,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000004,
+          "applied_action": [
+            0.5317045493241807
+          ],
+          "commanded_action": 0.5317045493241807,
+          "step": 4,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000005,
+          "applied_action": [
+            0.11173521726593927
+          ],
+          "commanded_action": 0.11173521726593927,
+          "step": 5,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000006,
+          "applied_action": [
+            -0.1125426344370837
+          ],
+          "commanded_action": -0.1125426344370837,
+          "step": 6,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000007,
+          "applied_action": [
+            -0.10754524038915676
+          ],
+          "commanded_action": -0.10754524038915676,
+          "step": 7,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000008,
+          "applied_action": [
+            -0.4383309551365713
+          ],
+          "commanded_action": -0.4383309551365713,
+          "step": 8,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000009,
+          "applied_action": [
+            -0.5398777901511257
+          ],
+          "commanded_action": -0.5398777901511257,
+          "step": 9,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000010,
+          "applied_action": [
+            -0.5077399589892582
+          ],
+          "commanded_action": -0.5077399589892582,
+          "step": 10,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000011,
+          "applied_action": [
+            -0.3010608862466793
+          ],
+          "commanded_action": -0.3010608862466793,
+          "step": 11,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000012,
+          "applied_action": [
+            -0.136513991177825
+          ],
+          "commanded_action": -0.136513991177825,
+          "step": 12,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000013,
+          "applied_action": [
+            -0.05578878475241825
+          ],
+          "commanded_action": -0.05578878475241825,
+          "step": 13,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000014,
+          "applied_action": [
+            -0.02799262970828145
+          ],
+          "commanded_action": -0.02799262970828145,
+          "step": 14,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000015,
+          "applied_action": [
+            -0.022700185898823846
+          ],
+          "commanded_action": -0.022700185898823846,
+          "step": 15,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000016,
+          "applied_action": [
+            -0.021914253708186327
+          ],
+          "commanded_action": -0.021914253708186327,
+          "step": 16,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000017,
+          "applied_action": [
+            -0.020459766648115264
+          ],
+          "commanded_action": -0.020459766648115264,
+          "step": 17,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000023,
+          "applied_action": [
+            -0.005823536429964164
+          ],
+          "commanded_action": -0.005823536429964164,
+          "step": 23,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000024,
+          "applied_action": [
+            -0.004704903892901783
+          ],
+          "commanded_action": -0.004704903892901783,
+          "step": 24,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      },
+      {
+        "receipt": {
+          "actuator": "b",
+          "command_id": 10000025,
+          "applied_action": [
+            -0.0036369837362917714
+          ],
+          "commanded_action": -0.0036369837362917714,
+          "step": 25,
+          "applied": true
+        },
+        "reason": "unknown_command"
+      }
+    ],
+    "decisions": [
+      {
+        "command_id": 2,
+        "actuator": "a",
+        "step": 2,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 3,
+        "actuator": "a",
+        "step": 3,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 4,
+        "actuator": "a",
+        "step": 4,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 5,
+        "actuator": "a",
+        "step": 5,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 6,
+        "actuator": "a",
+        "step": 6,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 7,
+        "actuator": "a",
+        "step": 7,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 8,
+        "actuator": "a",
+        "step": 8,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 9,
+        "actuator": "a",
+        "step": 9,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 10,
+        "actuator": "a",
+        "step": 10,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 11,
+        "actuator": "a",
+        "step": 11,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 12,
+        "actuator": "a",
+        "step": 12,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 13,
+        "actuator": "a",
+        "step": 13,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 14,
+        "actuator": "a",
+        "step": 14,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 15,
+        "actuator": "a",
+        "step": 15,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 16,
+        "actuator": "a",
+        "step": 16,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 17,
+        "actuator": "a",
+        "step": 17,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 23,
+        "actuator": "a",
+        "step": 23,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 24,
+        "actuator": "a",
+        "step": 24,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      },
+      {
+        "command_id": 25,
+        "actuator": "a",
+        "step": 25,
+        "decision": "confirmed_applied",
+        "by": "receipt",
+        "partial": false,
+        "deficit": 0.0,
+        "late": true
+      }
+    ]
+  },
+  "controller": {
+    "share": {
+      "a": 0.6666666666111111,
+      "b": 0.33333333338888893
+    },
+    "target_share": {
+      "a": 0.6666666666111111,
+      "b": 0.3333333333888889
+    },
+    "reallocation_active": false,
+    "actuator_available": {
+      "a": true,
+      "b": true
+    },
+    "warm": [
+      0.0,
+      -0.004694093755311084,
+      -0.004064516057808154,
+      -0.003362479003643747,
+      -0.0026944849937385763,
+      -0.0021073769798968713,
+      -0.0016159272884845345,
+      -0.0012186626383745571,
+      -0.0009067126991547228,
+      -0.0006686003706454634,
+      -0.0004927400876944333,
+      -0.000368721462728193,
+      -0.0002879849428314918,
+      -0.00024404671011896137,
+      -0.0002317132050919069,
+      -0.00024351834691310257,
+      -0.00026059558785207655,
+      -0.00023901795400370847,
+      -0.00011536141646778437,
+      0.00017229838225841314,
+      0.000598273485236688,
+      0.0007890503600122025,
+      0.00015026767907594976,
+      -0.0009317531387407546,
+      -0.0036369837362917714,
+      -0.0029815624179388954,
+      -0.00241377797490442,
+      -0.002093366872454695,
+      -0.0017331866502798782,
+      -0.001389074412698466,
+      -0.001085764392510659,
+      -0.0008312238186341773,
+      -0.0006248968571266281,
+      -0.0004623342965841664,
+      -0.0003377129653541957,
+      -0.00024515706864827275,
+      -0.00017941947367499788,
+      -0.00013623722996327443,
+      -0.00011244867936118145,
+      -0.00010559686156210154,
+      -0.00011213528420736573,
+      -0.00012282444259275737,
+      -0.00011578961451911532,
+      -5.905198588035486e-05,
+      7.930892681032325e-05,
+      0.00028836628355852206,
+      0.00038428283664025957,
+      6.015803981800438e-05,
+      -0.0006145686830193395,
+      -0.0006145686830193395
+    ]
+  }
+}
