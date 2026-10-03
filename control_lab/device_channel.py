@@ -23,6 +23,7 @@ from .command_ledger import (
     ACK,
     EXEC_FULL,
     EXEC_PARTIAL,
+    MEASURE_CUMULATIVE,
     NOT_RECEIVED,
     Receipt,
 )
@@ -80,6 +81,9 @@ class ReceiptBus:
                 applied_value=receipt.applied_value,
                 requested_value=receipt.requested_value,
                 fraction=receipt.fraction,
+                base_value=receipt.base_value,
+                clipped_value=receipt.clipped_value,
+                measure=receipt.measure,
                 detail=f"{receipt.detail}|copy_index={index}",
             ))
         return arrivals
@@ -180,6 +184,7 @@ class DeviceChannel:
                 fraction = float(self.execution_fn(step, command))
             fraction = min(1.0, max(0.0, fraction))
             cap = self.capability
+            base_before = self.previous_applied
             lower = max(cap.u_min, self.previous_applied - cap.du_down)
             upper = min(cap.u_max, self.previous_applied + cap.du_up)
             full = float(np.clip(command.action, lower, upper))
@@ -198,6 +203,9 @@ class DeviceChannel:
                 requested_value=command.action,
                 applied_value=applied,
                 fraction=fraction,
+                base_value=base_before,
+                clipped_value=full,
+                measure=MEASURE_CUMULATIVE,
             ))
         return applied
 

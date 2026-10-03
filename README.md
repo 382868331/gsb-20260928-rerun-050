@@ -34,7 +34,14 @@
   `command_id` 归档：重复回执标记 `duplicate`，较旧命令的迟到回执不会写到新
   命令上，与人工核实冲突的迟到回执标记 `superseded`；部分执行量保留为
   `uncertain` 区间（`confirmed_value` 为已发生部分，`remaining_value` 为待
-  核实部分）。
+  核实部分）。回执通过 `measure` 明确计量方式：`incremental` 只携带新增
+  执行量（在已确认累计水平上累加一次），`cumulative` 携带截至目前累计
+  水平（直接对齐，不重复累计）；内容完全相同的再次投递才标记
+  `duplicate`，先增量后累计的合法序列会被分别接受。只携带已执行量而
+  没有比例的部分回执记为 `uncertain`，余额保留，绝不推断为全部完成；
+  数量与比例矛盾或累计量倒退时，记录 `disputed`/`dispute_detail`/
+  `disputed_values` 保留争议双方并保持 `uncertain`，不静默选择任一数字。
+  设备回执自带 `base_value`/`clipped_value`，数量与比例在同一基准上核对。
 - `control_lab/device_channel.py`：真实设备侧（FIFO 延迟、限幅、断连、部分
   执行）与 `ReceiptBus`（回执延迟、重复、丢失）。断连期间设备收不到命令，
   重连时只补一条 `not_received` 回执，不自动重发。

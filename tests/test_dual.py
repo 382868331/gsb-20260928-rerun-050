@@ -16,9 +16,12 @@ from control_lab.command_ledger import (
     EXEC_PARTIAL,
     EXECUTED,
     IN_FLIGHT,
+    MEASURE_CUMULATIVE,
+    MEASURE_INCREMENTAL,
     NOT_APPLIED,
     QUEUED,
     UNCERTAIN,
+    CommandLedger,
     Receipt,
 )
 from control_lab.config import CartConfig, MPCConfig
@@ -280,3 +283,162 @@ def test_disconnect_reconnect_reports_not_received_without_resend():
     assert group.channels["b"].ground_truth_applied[lost.command_id] == \
         pytest.approx(lost.confirmed_value)
     assert abs(lost.confirmed_value - lost.action) > 1e-9
+
+
+def make_ledger(action=1.0, hold=0.0):
+    ledger = CommandLedger("a")
+    ledger.register(1, action, submitted_step=0, due_step=0, hold_value=hold)
+    return ledger
+
+
+def test_partial_receipt_without_fraction_keeps_remaining_balance():
+    # 只携带已执行量、没有比例的回执不能记成全部执行。
+    ledger = make_ledger(action=1.0, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=1,
+        applied_value=0.4,
+    ))
+    record = ledger.get(1)
+    assert record.status == UNCERTAIN
+    assert record.confirmed_value == pytest.approx(0.4)
+    assert record.remaining_value == pytest.approx(0.6)
+    lo, hi = ledger.possible_effect_interval(record)
+    assert lo < hi
+
+    # 既无量也无比例的部分回执：全部余额保留为待核实。
+    ledger2 = make_ledger(action=1.0, hold=0.0)
+    ledger2.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=1,
+    ))
+    record2 = ledger2.get(1)
+    assert record2.status == UNCERTAIN
+    assert record2.remaining_value == pytest.approx(1.0)
+
+
+def test_incremental_then_cumulative_receipts_not_double_counted():
+    ledger = make_ledger(action=1.0, hold=0.0)
+    # 先收到增量回执：新增 0.3。
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=1,
+        applied_value=0.3, measure=MEASURE_INCREMENTAL,
+    ))
+    record = ledger.get(1)
+    assert record.confirmed_value == pytest.approx(0.3)
+    assert record.remaining_value == pytest.approx(0.7)
+
+    # 随后收到累计回执：累计 0.6 是绝对水平，不是再叠加 0.6。
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=2,
+        applied_value=0.6, measure=MEASURE_CUMULATIVE,
+    ))
+    assert record.confirmed_value == pytest.approx(0.6)
+    assert record.remaining_value == pytest.approx(0.4)
+
+    # 完全相同的增量回执再次投递：标记 duplicate，不重复累计。
+    dup = ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=3,
+        applied_value=0.3, measure=MEASURE_INCREMENTAL,
+    ))
+    assert dup.duplicate
+    assert record.confirmed_value == pytest.approx(0.6)
+
+    # 累计到达全部请求量后转为已执行。
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=4,
+        applied_value=1.0, measure=MEASURE_CUMULATIVE,
+    ))
+    assert record.status == EXECUTED
+    assert record.remaining_value == pytest.approx(0.0)
+
+
+def test_quantity_fraction_contradiction_keeps_dispute():
+    ledger = make_ledger(action=1.0, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=1,
+        applied_value=0.4, fraction=0.9,
+    ))
+    record = ledger.get(1)
+    # 不静默选择任一数字：争议双方保留，状态仍为待核实。
+    assert record.disputed
+    assert "矛盾" in record.dispute_detail
+    assert record.disputed_values == pytest.approx([0.4, 0.9])
+    assert record.status == UNCERTAIN
+    lo, hi = ledger.possible_effect_interval(record)
+    assert lo <= 0.4 and hi >= 0.9
+
+
+def test_cumulative_regression_keeps_dispute():
+    ledger = make_ledger(action=1.0, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=1,
+        applied_value=0.8, measure=MEASURE_CUMULATIVE,
+    ))
+    record = ledger.get(1)
+    assert record.confirmed_value == pytest.approx(0.8)
+    # 后到的累计回执倒退：保留争议，已确认水平不被覆盖。
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=2,
+        applied_value=0.5, measure=MEASURE_CUMULATIVE,
+    ))
+    assert record.disputed
+    assert "倒退" in record.dispute_detail
+    assert record.disputed_values == pytest.approx([0.8, 0.5])
+    assert record.confirmed_value == pytest.approx(0.8)
+    assert record.status == UNCERTAIN
+
+
+def test_save_resume_after_partial_receipt_preserves_execution_facts(tmp_path):
+    # 中途保存恢复后继续输入：原始执行事实（含争议与余额）不被覆盖。
+    def execution(step, command):
+        return 0.4 if step == 3 else 1.0
+
+    bus = ReceiptBus()
+    plant, controller, group, _ = make_components(
+        bus=bus, channel_options={"b": {"execution_fn": execution}}
+    )
+    run_n(6, group, controller, plant)
+
+    partial = [r for r in group.ledgers["b"].records() if r.status == UNCERTAIN]
+    assert len(partial) == 1
+    original = partial[0]
+    original_confirmed = float(original.confirmed_value)
+    original_remaining = float(original.remaining_value)
+    truth_value = group.channels["b"].ground_truth_applied[original.command_id]
+
+    # 对 a 通道制造一条“数量与比例矛盾”的争议记录。
+    a_record = group.ledgers["a"].confirmed_occurred()[-1]
+    group.deliver_receipt(Receipt(
+        command_id=a_record.command_id, actuator="a", kind=EXEC_PARTIAL,
+        arrived_step=6, applied_value=a_record.action - 0.5, fraction=0.9,
+    ))
+    disputed = group.ledgers["a"].get(a_record.command_id)
+    assert disputed.disputed
+    disputed_values = list(disputed.disputed_values)
+
+    path = group.save_state(tmp_path / "dual_state.json")
+
+    plant2, controller2, group2, _ = make_components(bus=ReceiptBus())
+    group2.load_state_file(path)
+    controller2.update_capabilities(group2.capabilities(), group2.ledgers)
+
+    restored = group2.ledgers["b"].get(original.command_id)
+    assert restored.status == UNCERTAIN
+    assert restored.confirmed_value == pytest.approx(original_confirmed)
+    assert restored.remaining_value == pytest.approx(original_remaining)
+    restored_disputed = group2.ledgers["a"].get(a_record.command_id)
+    assert restored_disputed.disputed
+    assert restored_disputed.disputed_values == pytest.approx(disputed_values)
+
+    # 重开后继续输入：原部分执行事实与争议不被新命令覆盖。
+    run_n(8, group2, controller2, plant2, initial_step=6)
+    after = group2.ledgers["b"].get(original.command_id)
+    assert after.confirmed_value == pytest.approx(original_confirmed)
+    assert after.remaining_value == pytest.approx(original_remaining)
+    assert group2.channels["b"].ground_truth_applied[original.command_id] == \
+        pytest.approx(truth_value)
+    after_disputed = group2.ledgers["a"].get(a_record.command_id)
+    assert after_disputed.disputed
+    assert after_disputed.disputed_values == pytest.approx(disputed_values)
+    # 已生效命令不会因保存/重开再次施加。
+    queued_ids = {c.command_id for c in group2.channels["b"].pending_commands()}
+    assert original.command_id not in queued_ids

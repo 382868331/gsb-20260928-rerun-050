@@ -35,6 +35,14 @@ NOT_RECEIVED = "not_received"
 MANUAL_EXECUTED = "manual_executed"
 MANUAL_NOT_APPLIED = "manual_not_applied"
 
+# 回执计量方式：incremental 表示只携带“新增”执行量，cumulative 表示
+# 携带截至目前的“累计”执行量。同一指令可能先收到增量回执、后收到累计
+# 回执，台账按计量方式分别处理，避免重复累计。
+MEASURE_INCREMENTAL = "incremental"
+MEASURE_CUMULATIVE = "cumulative"
+
+_VALUE_TOL = 1e-6
+
 
 @dataclass
 class Receipt:
@@ -45,6 +53,9 @@ class Receipt:
     applied_value: float | None = None
     requested_value: float | None = None
     fraction: float | None = None
+    base_value: float | None = None
+    clipped_value: float | None = None
+    measure: str = MEASURE_CUMULATIVE
     duplicate: bool = False
     superseded: bool = False
     detail: str = ""
@@ -60,6 +71,11 @@ class Receipt:
             "requested_value": (None if self.requested_value is None
                                 else float(self.requested_value)),
             "fraction": None if self.fraction is None else float(self.fraction),
+            "base_value": (None if self.base_value is None
+                           else float(self.base_value)),
+            "clipped_value": (None if self.clipped_value is None
+                              else float(self.clipped_value)),
+            "measure": self.measure,
             "duplicate": bool(self.duplicate),
             "superseded": bool(self.superseded),
             "detail": self.detail,
@@ -75,6 +91,9 @@ class Receipt:
             applied_value=data.get("applied_value"),
             requested_value=data.get("requested_value"),
             fraction=data.get("fraction"),
+            base_value=data.get("base_value"),
+            clipped_value=data.get("clipped_value"),
+            measure=str(data.get("measure", MEASURE_CUMULATIVE)),
             duplicate=bool(data.get("duplicate", False)),
             superseded=bool(data.get("superseded", False)),
             detail=str(data.get("detail", "")),
@@ -92,6 +111,10 @@ class CommandRecord:
     confirmed_value: float | None = None
     hold_value: float = 0.0
     remaining_value: float | None = None
+    cumulative_value: float | None = None
+    disputed: bool = False
+    dispute_detail: str = ""
+    disputed_values: list[float] | None = None
     manually_decided: bool = False
     planned_reschedule_id: int | None = None
     note: str = ""
@@ -113,6 +136,12 @@ class CommandRecord:
             "hold_value": float(self.hold_value),
             "remaining_value": (None if self.remaining_value is None
                                 else float(self.remaining_value)),
+            "cumulative_value": (None if self.cumulative_value is None
+                                 else float(self.cumulative_value)),
+            "disputed": bool(self.disputed),
+            "dispute_detail": self.dispute_detail,
+            "disputed_values": (None if self.disputed_values is None
+                                else [float(v) for v in self.disputed_values]),
             "manually_decided": bool(self.manually_decided),
             "planned_reschedule_id": self.planned_reschedule_id,
             "note": self.note,
@@ -130,6 +159,10 @@ class CommandRecord:
             confirmed_value=data.get("confirmed_value"),
             hold_value=float(data.get("hold_value", 0.0)),
             remaining_value=data.get("remaining_value"),
+            cumulative_value=data.get("cumulative_value"),
+            disputed=bool(data.get("disputed", False)),
+            dispute_detail=str(data.get("dispute_detail", "")),
+            disputed_values=data.get("disputed_values"),
             manually_decided=bool(data.get("manually_decided", False)),
             planned_reschedule_id=data.get("planned_reschedule_id"),
             note=str(data.get("note", "")),
@@ -143,8 +176,10 @@ class CommandLedger:
         self.actuator = str(actuator)
         self._records: dict[int, CommandRecord] = {}
         self._receipts: list[Receipt] = []
-        # 同一命令的同一种事实回执只接受第一次；之后重复到达标记 duplicate。
-        self._accepted_kinds: dict[tuple[int, str], int] = {}
+        # 同一条事实回执（命令+种类+计量方式+内容指纹）只接受第一次；
+        # 完全相同内容的再次投递标记 duplicate，而内容不同的后续回执
+        # （例如先增量后累计）仍会被接受并按计量方式合并。
+        self._accepted_kinds: dict[tuple, int] = {}
 
     def register(self, command_id: int, action: float, submitted_step: int,
                  due_step: int, hold_value: float = 0.0) -> CommandRecord:
@@ -202,7 +237,10 @@ class CommandLedger:
             raise KeyError(
                 f"回执属于未知命令 {receipt.command_id}，不能挂到其他命令上"
             )
-        key = (receipt.command_id, receipt.kind)
+        key = (
+            receipt.command_id, receipt.kind, receipt.measure,
+            receipt.applied_value, receipt.fraction,
+        )
         if key in self._accepted_kinds:
             receipt.duplicate = True
         else:
@@ -237,21 +275,7 @@ class CommandLedger:
             return receipt
 
         if receipt.kind in (EXEC_FULL, EXEC_PARTIAL, MANUAL_EXECUTED):
-            applied = receipt.applied_value
-            if applied is None:
-                applied = record.action
-            applied = float(applied)
-            if receipt.kind == MANUAL_EXECUTED:
-                record.manually_decided = True
-                record.status = EXECUTED
-            elif receipt.kind == EXEC_PARTIAL and receipt.fraction is not None \
-                    and 0.0 <= float(receipt.fraction) < 1.0 - 1e-12:
-                record.status = UNCERTAIN
-                record.remaining_value = float(record.action - applied)
-            else:
-                record.status = EXECUTED
-                record.remaining_value = 0.0
-            record.confirmed_value = applied
+            self._ingest_execution(record, receipt)
             return receipt
 
         if receipt.kind == MANUAL_NOT_APPLIED:
@@ -267,6 +291,122 @@ class CommandLedger:
             return receipt
 
         raise ValueError(f"未知回执种类: {receipt.kind}")
+
+    # ------------------------------------------------------------------
+    # 执行回执合并
+    # ------------------------------------------------------------------
+    def _execution_base(self, record: CommandRecord) -> float:
+        """增量回执的累加基准：已确认的累计水平，否则保持值。"""
+        if record.cumulative_value is not None:
+            return float(record.cumulative_value)
+        if record.confirmed_value is not None:
+            return float(record.confirmed_value)
+        return float(record.hold_value)
+
+    def _mark_dispute(self, record: CommandRecord, detail: str,
+                      values: list[float]) -> None:
+        """数量与比例矛盾或累计量倒退：保留争议双方，不静默选择。"""
+        record.disputed = True
+        record.dispute_detail = detail
+        record.disputed_values = [float(v) for v in values]
+        record.status = UNCERTAIN
+        base = record.confirmed_value
+        if base is None:
+            base = float(record.hold_value)
+        record.remaining_value = float(record.action - base)
+
+    def _ingest_execution(self, record: CommandRecord,
+                          receipt: Receipt) -> None:
+        action = float(record.action)
+        hold = float(record.hold_value)
+        manual = receipt.kind == MANUAL_EXECUTED
+        measure = receipt.measure or MEASURE_CUMULATIVE
+
+        # 分别由“已执行量”和“比例”推出候选绝对作用量；两者都在时互相核对。
+        candidates: list[float] = []
+        if receipt.applied_value is not None:
+            value = float(receipt.applied_value)
+            if measure == MEASURE_INCREMENTAL:
+                value = self._execution_base(record) + value
+            candidates.append(value)
+        if receipt.fraction is not None:
+            fraction = float(receipt.fraction)
+            if measure == MEASURE_INCREMENTAL:
+                base = self._execution_base(record)
+                candidates.append(base + fraction * (action - base))
+            else:
+                # 设备回执自带基准/限幅目标时，按同一基准核对数量与比例；
+                # 外部回执缺少这些信息时退回台账登记的保持值与请求量。
+                base = (float(receipt.base_value)
+                        if receipt.base_value is not None else hold)
+                target = (float(receipt.clipped_value)
+                          if receipt.clipped_value is not None else action)
+                candidates.append(base + fraction * (target - base))
+
+        if not candidates:
+            if receipt.kind == EXEC_FULL or manual:
+                # 设备/人工明确声明“全部执行”但未给数字：按请求量确认。
+                candidates.append(action)
+            else:
+                # 部分执行回执既无量也无比例：不能推断为全部完成，
+                # 已确认部分保持不变，余额全部保留为待核实。
+                record.status = UNCERTAIN
+                base = record.confirmed_value
+                if base is None:
+                    base = hold
+                record.remaining_value = float(action - base)
+                record.note = "partial_receipt_without_amount"
+                return
+
+        if len(candidates) == 2 and \
+                abs(candidates[0] - candidates[1]) > _VALUE_TOL:
+            self._mark_dispute(
+                record,
+                "applied_value 与 fraction 矛盾",
+                candidates,
+            )
+            return
+
+        applied = float(candidates[0])
+
+        # 累计量倒退：后到的累计回执比已确认累计水平离目标更远。
+        if measure == MEASURE_CUMULATIVE and not manual and \
+                record.cumulative_value is not None:
+            direction = action - hold
+            if abs(direction) > _VALUE_TOL:
+                sign = 1.0 if direction > 0 else -1.0
+                old_progress = (float(record.cumulative_value) - hold) * sign
+                new_progress = (applied - hold) * sign
+                if new_progress < old_progress - _VALUE_TOL:
+                    self._mark_dispute(
+                        record,
+                        "累计量倒退",
+                        [float(record.cumulative_value), applied],
+                    )
+                    return
+
+        record.cumulative_value = applied
+        record.confirmed_value = applied
+
+        if manual:
+            record.manually_decided = True
+            record.status = EXECUTED
+            record.remaining_value = 0.0
+            return
+
+        full = receipt.kind == EXEC_FULL
+        if receipt.fraction is not None and float(receipt.fraction) >= 1.0 - 1e-12:
+            full = True
+        if abs(applied - action) <= _VALUE_TOL:
+            full = True
+        if full:
+            record.status = EXECUTED
+            record.remaining_value = 0.0
+        else:
+            # 部分执行：已执行量保留，未执行余额保留为待核实，
+            # 缺少比例绝不推断为全部完成。
+            record.status = UNCERTAIN
+            record.remaining_value = float(action - applied)
 
     def receipts(self, include_duplicates: bool = True) -> list[Receipt]:
         if include_duplicates:
@@ -303,7 +443,10 @@ class CommandLedger:
         for receipt in self._receipts:
             if receipt.duplicate:
                 continue
-            key = (receipt.command_id, receipt.kind)
+            key = (
+                receipt.command_id, receipt.kind, receipt.measure,
+                receipt.applied_value, receipt.fraction,
+            )
             self._accepted_kinds.setdefault(key, receipt.arrived_step)
 
     def possible_effect_interval(self, record: CommandRecord) -> tuple[float, float]:
@@ -313,10 +456,15 @@ class CommandLedger:
             return value, value
         if record.status == NOT_APPLIED:
             return float(record.hold_value), float(record.hold_value)
-        if record.status == UNCERTAIN and record.confirmed_value is not None:
-            lo = min(float(record.confirmed_value), float(record.action))
-            hi = max(float(record.confirmed_value), float(record.action))
-            return lo, hi
+        if record.status == UNCERTAIN:
+            points = [float(record.action)]
+            if record.confirmed_value is not None:
+                points.append(float(record.confirmed_value))
+            else:
+                points.append(float(record.hold_value))
+            if record.disputed_values:
+                points.extend(float(v) for v in record.disputed_values)
+            return min(points), max(points)
         lo = min(record.hold_value, float(record.action))
         hi = max(record.hold_value, float(record.action))
         return lo, hi

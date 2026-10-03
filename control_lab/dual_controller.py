@@ -144,10 +144,8 @@ class DualMPCController:
                     hi = min(cap.u_max, record.hold_value + cap.du_up)
                     requested = float(np.clip(record.action, lo, hi))
                     record.action = requested
-                    if record.confirmed_value is not None:
-                        record.confirmed_value = float(
-                            np.clip(record.confirmed_value, lo, hi)
-                        )
+                    # 已实际执行的量（含部分执行的已发生部分）是事实，
+                    # 不随能力重核改写；待核实余额也保持原记录。
 
     # ------------------------------------------------------------------
     # 台账 -> 时域区间投影
