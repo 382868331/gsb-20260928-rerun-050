@@ -384,7 +384,132 @@ def test_cumulative_regression_keeps_dispute():
     assert "倒退" in record.dispute_detail
     assert record.disputed_values == pytest.approx([0.8, 0.5])
     assert record.confirmed_value == pytest.approx(0.8)
+    # 未确认余额仍待核实，但争议小值不得进入控制区间。
     assert record.status == UNCERTAIN
+    lo, hi = ledger.possible_effect_interval(record)
+    assert lo == pytest.approx(0.8)
+    assert hi == pytest.approx(1.0)
+
+
+def test_regressive_receipt_after_full_execution_keeps_fact_for_negative_action():
+    ledger = make_ledger(action=-1.0, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_FULL, arrived_step=1,
+        applied_value=-1.0, measure=MEASURE_CUMULATIVE,
+    ))
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=2,
+        applied_value=-0.4, measure=MEASURE_CUMULATIVE,
+    ))
+    record = ledger.get(1)
+    assert record.status == EXECUTED
+    assert record.confirmed_value == pytest.approx(-1.0)
+    assert record.disputed_values == pytest.approx([-1.0, -0.4])
+    assert ledger.possible_effect_interval(record) == pytest.approx(
+        (-1.0, -1.0)
+    )
+
+
+def test_late_receipt_after_cancellation_is_dispute_evidence_only():
+    ledger = make_ledger(action=1.0, hold=0.2)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind="not_received", arrived_step=1,
+        applied_value=0.2,
+    ))
+    late = ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=2,
+        applied_value=0.7, measure=MEASURE_CUMULATIVE,
+    ))
+    record = ledger.get(1)
+    assert late.superseded
+    assert record.status == NOT_APPLIED
+    assert record.confirmed_value == pytest.approx(0.2)
+    assert record.disputed_values == pytest.approx([0.2, 0.7])
+    assert ledger.possible_effect_interval(record) == pytest.approx(
+        (0.2, 0.2)
+    )
+
+
+def test_explicit_correction_records_basis_and_remaining_capacity():
+    ledger = make_ledger(action=1.0, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_FULL, arrived_step=1,
+        applied_value=1.0, measure=MEASURE_CUMULATIVE,
+    ))
+    correction = ledger.register_correction(
+        step=2, command_id=1, applied_value=0.4,
+        reason="independent_field_measurement",
+    )
+    record = ledger.get(1)
+    assert correction["after"]["status"] == UNCERTAIN
+    assert record.status == UNCERTAIN
+    assert record.confirmed_value == pytest.approx(0.4)
+    assert record.remaining_value == pytest.approx(0.6)
+    assert correction["before"]["possible_effect_interval"] == \
+        pytest.approx([1.0, 1.0])
+    assert correction["after"]["possible_effect_interval"] == \
+        pytest.approx([0.4, 1.0])
+    assert record.correction_history[-1]["before"]["confirmed_value"] == \
+        pytest.approx(1.0)
+    assert record.correction_history[-1]["after"]["confirmed_value"] == \
+        pytest.approx(0.4)
+    assert record.correction_history[-1]["before"]["remaining_value"] == \
+        pytest.approx(0.0)
+    assert record.correction_history[-1]["after"]["remaining_value"] == \
+        pytest.approx(0.6)
+
+
+def test_correction_history_survives_save_and_resume(tmp_path):
+    plant, controller, group, _ = make_components()
+    run_n(3, group, controller, plant)
+    record = group.ledgers["a"].confirmed_occurred()[-1]
+    corrected_value = float(record.confirmed_value) - 0.2
+    correction = group.register_correction(
+        3, "a", record.command_id, corrected_value,
+        reason="independent_audit",
+    )
+    path = group.save_state(tmp_path / "correction.json")
+
+    plant2, controller2, group2, _ = make_components(bus=ReceiptBus())
+    group2.load_state_file(path)
+    restored = group2.ledgers["a"].get(record.command_id)
+    assert restored.correction_history == [correction]
+    assert restored.confirmed_value == pytest.approx(corrected_value)
+    assert len(group2.channels["a"].ground_truth_applied) == \
+        len(group.channels["a"].ground_truth_applied)
+
+
+def test_parallel_regressive_receipts_do_not_change_confirmed_facts():
+    plant, controller, group, _ = make_components()
+    for name, action in (("a", 1.0), ("b", -0.8)):
+        ledger = group.ledgers[name]
+        command_id, due_step = group.channels[name].submit(action, 1)
+        ledger.register(command_id, action, 1, due_step,
+                        hold_value=0.0)
+        ledger.mark_due(due_step)
+        ledger.ingest(Receipt(
+            command_id=command_id, actuator=name, kind=EXEC_FULL,
+            arrived_step=due_step, applied_value=action,
+            measure=MEASURE_CUMULATIVE,
+        ))
+        ledger.ingest(Receipt(
+            command_id=command_id, actuator=name, kind=EXEC_PARTIAL,
+            arrived_step=due_step + 1,
+            applied_value=action * 0.5,
+            measure=MEASURE_CUMULATIVE,
+        ))
+    assert group.ledgers["a"].get(
+        group.ledgers["a"].records()[-1].command_id
+    ).status == EXECUTED
+    assert group.ledgers["a"].possible_effect_interval(
+        group.ledgers["a"].records()[-1]
+    ) == pytest.approx((1.0, 1.0))
+    assert group.ledgers["b"].get(
+        group.ledgers["b"].records()[-1].command_id
+    ).status == EXECUTED
+    assert group.ledgers["b"].possible_effect_interval(
+        group.ledgers["b"].records()[-1]
+    ) == pytest.approx((-0.8, -0.8))
 
 
 def test_save_resume_after_partial_receipt_preserves_execution_facts(tmp_path):

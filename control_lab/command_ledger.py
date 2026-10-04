@@ -34,6 +34,7 @@ EXEC_PARTIAL = "executed_partial"
 NOT_RECEIVED = "not_received"
 MANUAL_EXECUTED = "manual_executed"
 MANUAL_NOT_APPLIED = "manual_not_applied"
+MANUAL_CORRECTION = "manual_correction"
 
 # 回执计量方式：incremental 表示只携带“新增”执行量，cumulative 表示
 # 携带截至目前的“累计”执行量。同一指令可能先收到增量回执、后收到累计
@@ -117,6 +118,7 @@ class CommandRecord:
     disputed_values: list[float] | None = None
     manually_decided: bool = False
     planned_reschedule_id: int | None = None
+    correction_history: list[dict] | None = None
     note: str = ""
 
     @property
@@ -144,6 +146,10 @@ class CommandRecord:
                                 else [float(v) for v in self.disputed_values]),
             "manually_decided": bool(self.manually_decided),
             "planned_reschedule_id": self.planned_reschedule_id,
+            "correction_history": (
+                None if self.correction_history is None
+                else [dict(item) for item in self.correction_history]
+            ),
             "note": self.note,
         }
 
@@ -165,6 +171,10 @@ class CommandRecord:
             disputed_values=data.get("disputed_values"),
             manually_decided=bool(data.get("manually_decided", False)),
             planned_reschedule_id=data.get("planned_reschedule_id"),
+            correction_history=(
+                None if data.get("correction_history") is None
+                else [dict(item) for item in data["correction_history"]]
+            ),
             note=str(data.get("note", "")),
         )
 
@@ -250,9 +260,15 @@ class CommandLedger:
             return receipt
 
         record = self._records[receipt.command_id]
-        if record.manually_decided:
+        if record.manually_decided and receipt.kind != MANUAL_CORRECTION:
             receipt.superseded = True
             return receipt
+
+        manual_correction = receipt.kind == MANUAL_CORRECTION
+        if record.confirmed and not manual_correction:
+            self._record_conflicting_settled_fact(record, receipt)
+            if receipt.superseded:
+                return receipt
 
         if receipt.kind == ACK:
             # ack 只在命令已到生效时刻且没有执行/未收到事实时改变信念；
@@ -274,7 +290,8 @@ class CommandLedger:
             record.note = "device_reported_not_received"
             return receipt
 
-        if receipt.kind in (EXEC_FULL, EXEC_PARTIAL, MANUAL_EXECUTED):
+        if receipt.kind in (EXEC_FULL, EXEC_PARTIAL, MANUAL_EXECUTED,
+                            MANUAL_CORRECTION):
             self._ingest_execution(record, receipt)
             return receipt
 
@@ -304,25 +321,26 @@ class CommandLedger:
         return float(record.hold_value)
 
     def _mark_dispute(self, record: CommandRecord, detail: str,
-                      values: list[float]) -> None:
+                      values: list[float],
+                      status: str | None = None) -> None:
         """数量与比例矛盾或累计量倒退：保留争议双方，不静默选择。"""
         record.disputed = True
         record.dispute_detail = detail
         record.disputed_values = [float(v) for v in values]
-        record.status = UNCERTAIN
+        if status is not None:
+            record.status = status
+        elif not record.confirmed:
+            record.status = UNCERTAIN
         base = record.confirmed_value
         if base is None:
             base = float(record.hold_value)
         record.remaining_value = float(record.action - base)
 
-    def _ingest_execution(self, record: CommandRecord,
-                          receipt: Receipt) -> None:
+    def _receipt_candidates(self, record: CommandRecord,
+                            receipt: Receipt) -> list[float]:
         action = float(record.action)
         hold = float(record.hold_value)
-        manual = receipt.kind == MANUAL_EXECUTED
         measure = receipt.measure or MEASURE_CUMULATIVE
-
-        # 分别由“已执行量”和“比例”推出候选绝对作用量；两者都在时互相核对。
         candidates: list[float] = []
         if receipt.applied_value is not None:
             value = float(receipt.applied_value)
@@ -335,13 +353,51 @@ class CommandLedger:
                 base = self._execution_base(record)
                 candidates.append(base + fraction * (action - base))
             else:
-                # 设备回执自带基准/限幅目标时，按同一基准核对数量与比例；
-                # 外部回执缺少这些信息时退回台账登记的保持值与请求量。
                 base = (float(receipt.base_value)
                         if receipt.base_value is not None else hold)
                 target = (float(receipt.clipped_value)
                           if receipt.clipped_value is not None else action)
                 candidates.append(base + fraction * (target - base))
+        if not candidates and receipt.kind in (
+            EXEC_FULL, MANUAL_EXECUTED, MANUAL_CORRECTION
+        ):
+            candidates.append(action)
+        return candidates
+
+    def _record_conflicting_settled_fact(self, record: CommandRecord,
+                                         receipt: Receipt) -> None:
+        """终态后的普通迟到回执只作争议证据，不撤销已确认事实。"""
+        claimed: list[float] = []
+        if receipt.kind in (EXEC_FULL, EXEC_PARTIAL, MANUAL_EXECUTED):
+            claimed = self._receipt_candidates(record, receipt)
+        elif receipt.kind == NOT_RECEIVED:
+            claimed = [float(
+                receipt.applied_value
+                if receipt.applied_value is not None else record.hold_value
+            )]
+        if not claimed:
+            receipt.superseded = True
+            return
+        current = float(record.confirmed_value)
+        if all(abs(value - current) <= _VALUE_TOL for value in claimed):
+            receipt.superseded = True
+            return
+        receipt.superseded = True
+        values = [current] + claimed
+        record.disputed = True
+        record.dispute_detail = "终态后收到冲突的迟到回执"
+        record.disputed_values = [float(v) for v in values]
+
+    def _ingest_execution(self, record: CommandRecord,
+                          receipt: Receipt) -> None:
+        action = float(record.action)
+        hold = float(record.hold_value)
+        manual = receipt.kind in (MANUAL_EXECUTED, MANUAL_CORRECTION)
+        correction = receipt.kind == MANUAL_CORRECTION
+        measure = receipt.measure or MEASURE_CUMULATIVE
+
+        # 分别由“已执行量”和“比例”推出候选绝对作用量；两者都在时互相核对。
+        candidates = self._receipt_candidates(record, receipt)
 
         if not candidates:
             if receipt.kind == EXEC_FULL or manual:
@@ -382,13 +438,17 @@ class CommandLedger:
                         record,
                         "累计量倒退",
                         [float(record.cumulative_value), applied],
+                        status=record.status,
                     )
                     return
+
+        if correction:
+            return self._apply_correction(record, receipt, applied)
 
         record.cumulative_value = applied
         record.confirmed_value = applied
 
-        if manual:
+        if receipt.kind == MANUAL_EXECUTED:
             record.manually_decided = True
             record.status = EXECUTED
             record.remaining_value = 0.0
@@ -407,6 +467,58 @@ class CommandLedger:
             # 缺少比例绝不推断为全部完成。
             record.status = UNCERTAIN
             record.remaining_value = float(action - applied)
+
+    def _fact_snapshot(self, record: CommandRecord) -> dict:
+        lo, hi = self.possible_effect_interval(record)
+        return {
+            "status": record.status,
+            "confirmed_value": (
+                None if record.confirmed_value is None
+                else float(record.confirmed_value)
+            ),
+            "remaining_value": (
+                None if record.remaining_value is None
+                else float(record.remaining_value)
+            ),
+            "possible_effect_interval": [float(lo), float(hi)],
+        }
+
+    def _apply_correction(self, record: CommandRecord, receipt: Receipt,
+                          applied: float) -> None:
+        before = self._fact_snapshot(record)
+        action = float(record.action)
+        record.cumulative_value = applied
+        record.confirmed_value = applied
+        record.remaining_value = float(action - applied)
+        record.status = (EXECUTED if abs(applied - action) <= _VALUE_TOL
+                         else UNCERTAIN)
+        record.manually_decided = True
+        record.disputed = False
+        record.dispute_detail = ""
+        after = self._fact_snapshot(record)
+        entry = {
+            "step": int(receipt.arrived_step),
+            "reason": receipt.detail or "manual_correction",
+            "before": before,
+            "after": after,
+        }
+        if record.correction_history is None:
+            record.correction_history = []
+        record.correction_history.append(entry)
+        record.note = "manual_correction"
+
+    def register_correction(self, step: int, command_id: int,
+                            applied_value: float,
+                            reason: str = "manual_correction") -> dict:
+        record = self.get(command_id)
+        receipt = Receipt(
+            command_id=int(command_id), actuator=self.actuator,
+            kind=MANUAL_CORRECTION, arrived_step=int(step),
+            applied_value=float(applied_value), detail=reason,
+        )
+        self._receipts.append(receipt)
+        self._apply_correction(record, receipt, float(applied_value))
+        return record.correction_history[-1]
 
     def receipts(self, include_duplicates: bool = True) -> list[Receipt]:
         if include_duplicates:
@@ -462,7 +574,7 @@ class CommandLedger:
                 points.append(float(record.confirmed_value))
             else:
                 points.append(float(record.hold_value))
-            if record.disputed_values:
+            if record.disputed_values and record.confirmed_value is None:
                 points.extend(float(v) for v in record.disputed_values)
             return min(points), max(points)
         lo = min(record.hold_value, float(record.action))

@@ -40,7 +40,12 @@
   `duplicate`，先增量后累计的合法序列会被分别接受。只携带已执行量而
   没有比例的部分回执记为 `uncertain`，余额保留，绝不推断为全部完成；
   数量与比例矛盾或累计量倒退时，记录 `disputed`/`dispute_detail`/
-  `disputed_values` 保留争议双方并保持 `uncertain`，不静默选择任一数字。
+  `disputed_values` 保留争议双方；尚未确认的余额继续保持 `uncertain`，
+  但可能作用区间只能从已确认量延伸到请求量，不能纳入更小的倒退值。命令若已
+  进入 `executed`/`not_applied` 终态，普通迟到回执只会标记为 `superseded`
+  并追加争议证据，不能撤销已确认事实，也不能让已发生动作重新进入待补偿
+  区间。独立调查结论必须通过显式纠正决定登记，纠正记录同时保存纠正前后
+  的状态、已确认依据、可能作用区间和剩余量；普通迟到回执不会自动触发纠正。
   设备回执自带 `base_value`/`clipped_value`，数量与比例在同一基准上核对。
 - `control_lab/device_channel.py`：真实设备侧（FIFO 延迟、限幅、断连、部分
   执行）与 `ReceiptBus`（回执延迟、重复、丢失）。断连期间设备收不到命令，
@@ -61,7 +66,8 @@
   通道区间、两套方案、回执流水与全部命令记录。
 - `experiments/run_dual_scenarios.py`：场景 `06_dual_uncertain_receipt`（回执
   丢失/重复/迟到/部分执行/断连重连）与 `07_dual_capability_manual`（能力收缩、
-  人工核实后重排、中途保存恢复）。
+  人工核实/显式纠正后重排、中途保存恢复）。保存恢复只反序列化一次台账和
+  真实通道事实，已执行命令不会因重启再次施加或计入控制基准两次。
 
 ```bash
 .venv/bin/python -m experiments.run_dual_scenarios

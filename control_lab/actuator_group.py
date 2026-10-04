@@ -137,6 +137,15 @@ class ActuatorGroup:
         )
         return self.ledgers[name].ingest(receipt)
 
+    def register_correction(self, step: int, name: str, command_id: int,
+                            applied_value: float,
+                            reason: str = "manual_correction") -> dict:
+        """登记独立纠正决定；普通迟到回执不能隐式触发该路径。"""
+        return self.ledgers[name].register_correction(
+            step=int(step), command_id=int(command_id),
+            applied_value=float(applied_value), reason=reason,
+        )
+
     def reconnect(self, step: int, name: str | None = None) -> None:
         """执行器重连：断连命令保留原归属，未收到回执入总线，不重发。"""
         targets = [name] if name is not None else list(self.names)
