@@ -133,7 +133,8 @@ class DualMPCController:
         for name, capability in capabilities.items():
             self.caps[name] = capability
         # 能力降低后立即重新核对尚未发生的动作：可能作用区间用新限幅，
-        # 已发生事实（confirmed_value）不回退。
+        # 已发生事实（含 uncertain 记录中已确认的部分执行量）不回退、
+        # 不被新限幅裁改；只收缩尚未执行的请求量与待执行余额。
         if ledgers is not None:
             for name, ledger in ledgers.items():
                 cap = self.caps[name]
@@ -144,10 +145,10 @@ class DualMPCController:
                     hi = min(cap.u_max, record.hold_value + cap.du_up)
                     requested = float(np.clip(record.action, lo, hi))
                     record.action = requested
-                    if record.confirmed_value is not None:
-                        record.confirmed_value = float(
-                            np.clip(record.confirmed_value, lo, hi)
-                        )
+                    if record.status == UNCERTAIN \
+                            and record.confirmed_value is not None:
+                        record.remaining_value = float(
+                            record.action - record.confirmed_value)
 
     # ------------------------------------------------------------------
     # 台账 -> 时域区间投影

@@ -35,6 +35,11 @@
   命令上，与人工核实冲突的迟到回执标记 `superseded`；部分执行量保留为
   `uncertain` 区间（`confirmed_value` 为已发生部分，`remaining_value` 为待
   核实部分）。
+  回执带计量方式 `mode`：`cumulative` 表示累计作用量（覆盖而非累加），
+  `incremental` 表示相对已确认量的增量，先增量后累计不会重复累计；执行
+  回执只带量不带比例时按量与目标的差距判定部分/完成，缺失比例绝不推断
+  为全部完成；数量与比例矛盾或累计量倒退的回执标记 `disputed` 并记入命令
+  的 `disputes`，保留争议双方数字而不静默选择。
 - `control_lab/device_channel.py`：真实设备侧（FIFO 延迟、限幅、断连、部分
   执行）与 `ReceiptBus`（回执延迟、重复、丢失）。断连期间设备收不到命令，
   重连时只补一条 `not_received` 回执，不自动重发。

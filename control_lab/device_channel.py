@@ -80,6 +80,7 @@ class ReceiptBus:
                 applied_value=receipt.applied_value,
                 requested_value=receipt.requested_value,
                 fraction=receipt.fraction,
+                mode=receipt.mode,
                 detail=f"{receipt.detail}|copy_index={index}",
             ))
         return arrivals

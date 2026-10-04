@@ -16,9 +16,11 @@ from control_lab.command_ledger import (
     EXEC_PARTIAL,
     EXECUTED,
     IN_FLIGHT,
+    MODE_INCREMENTAL,
     NOT_APPLIED,
     QUEUED,
     UNCERTAIN,
+    CommandLedger,
     Receipt,
 )
 from control_lab.config import CartConfig, MPCConfig
@@ -280,3 +282,144 @@ def test_disconnect_reconnect_reports_not_received_without_resend():
     assert group.channels["b"].ground_truth_applied[lost.command_id] == \
         pytest.approx(lost.confirmed_value)
     assert abs(lost.confirmed_value - lost.action) > 1e-9
+
+
+def make_ledger_with_command(action=1.0, hold=0.0):
+    ledger = CommandLedger("a")
+    ledger.register(1, action, submitted_step=0, due_step=0, hold_value=hold)
+    ledger.mark_due(0)
+    return ledger
+
+
+def partial_receipt(step, **kwargs):
+    defaults = dict(command_id=1, actuator="a", kind=EXEC_PARTIAL,
+                    arrived_step=step)
+    defaults.update(kwargs)
+    return Receipt(**defaults)
+
+
+def test_partial_receipt_without_fraction_is_not_treated_as_full():
+    ledger = make_ledger_with_command(action=1.0)
+    receipt = ledger.ingest(partial_receipt(1, applied_value=0.3))
+    record = ledger.get(1)
+    # 只带量不带比例：已执行量保留，余额不消失，不能记成全部执行。
+    assert not receipt.disputed
+    assert record.status == UNCERTAIN
+    assert record.confirmed_value == pytest.approx(0.3)
+    assert record.remaining_value == pytest.approx(0.7)
+    lo, hi = ledger.possible_effect_interval(record)
+    assert lo == pytest.approx(0.3) and hi == pytest.approx(1.0)
+
+
+def test_partial_receipt_without_amount_stays_uncertain():
+    ledger = make_ledger_with_command(action=1.0)
+    ledger.ingest(partial_receipt(1))
+    record = ledger.get(1)
+    assert record.status == UNCERTAIN
+    assert record.remaining_value == pytest.approx(1.0)
+
+
+def test_incremental_then_cumulative_receipts_do_not_double_count():
+    ledger = make_ledger_with_command(action=1.0)
+    # 先收到增量回执：相对保持值新增 0.3。
+    ledger.ingest(partial_receipt(1, applied_value=0.3,
+                                  mode=MODE_INCREMENTAL))
+    record = ledger.get(1)
+    assert record.status == UNCERTAIN
+    assert record.confirmed_value == pytest.approx(0.3)
+    # 随后收到累计回执：到目前为止共 0.5，覆盖而不是累加。
+    ledger.ingest(partial_receipt(2, applied_value=0.5))
+    assert record.confirmed_value == pytest.approx(0.5)
+    assert record.remaining_value == pytest.approx(0.5)
+    # 同一累计回执重复到达：标记 duplicate，不重复计入。
+    dup = ledger.ingest(partial_receipt(3, applied_value=0.5))
+    assert dup.duplicate
+    assert record.confirmed_value == pytest.approx(0.5)
+    # 累计到全部请求量：即使不带比例也确认完成。
+    ledger.ingest(partial_receipt(4, applied_value=1.0))
+    assert record.status == EXECUTED
+    assert record.remaining_value == 0.0
+
+
+def test_amount_fraction_contradiction_is_kept_as_dispute():
+    ledger = make_ledger_with_command(action=1.0)
+    ledger.ingest(partial_receipt(1, applied_value=0.4, fraction=0.4))
+    record = ledger.get(1)
+    assert record.confirmed_value == pytest.approx(0.4)
+    # 比例说 0.1，量却对应 0.9：矛盾，保留双方数字，不静默选择。
+    receipt = ledger.ingest(partial_receipt(2, applied_value=0.9,
+                                            fraction=0.1))
+    assert receipt.disputed
+    assert record.confirmed_value == pytest.approx(0.4)
+    assert record.status == UNCERTAIN
+    assert record.disputes and "amount_fraction_mismatch" in \
+        record.disputes[-1]["reason"]
+    assert record.disputes[-1]["reported_value"] == pytest.approx(0.9)
+
+
+def test_cumulative_regression_is_kept_as_dispute():
+    ledger = make_ledger_with_command(action=1.0)
+    ledger.ingest(partial_receipt(1, applied_value=0.6))
+    record = ledger.get(1)
+    assert record.confirmed_value == pytest.approx(0.6)
+    # 累计量倒退到 0.4：保留争议，已确认量不回退。
+    receipt = ledger.ingest(partial_receipt(2, applied_value=0.4))
+    assert receipt.disputed
+    assert record.confirmed_value == pytest.approx(0.6)
+    assert record.remaining_value == pytest.approx(0.4)
+    assert "cumulative_regression" in record.disputes[-1]["reason"]
+
+
+def test_save_resume_then_late_receipts_keep_original_facts(tmp_path):
+    # 中途保存恢复后继续输入：部分执行、迟到累计回执、重复回执的
+    # 含义一致，且恢复前的原始执行事实不被覆盖。
+    def execution(step, command):
+        return 0.4 if step == 3 else 1.0
+
+    bus = ReceiptBus()
+    plant, controller, group, _ = make_components(
+        bus=bus, channel_options={"b": {"execution_fn": execution}}
+    )
+    run_n(4, group, controller, plant)
+    partial = group.ledgers["b"].records(UNCERTAIN)
+    assert len(partial) == 1
+    partial_id = partial[0].command_id
+    partial_confirmed = partial[0].confirmed_value
+    partial_action = partial[0].action
+    executed_before = {
+        r.command_id: r.confirmed_value
+        for r in group.ledgers["b"].confirmed_occurred()
+    }
+    assert executed_before
+    path = group.save_state(tmp_path / "dual_state.json")
+
+    plant2, controller2, group2, _ = make_components(bus=ReceiptBus())
+    group2.load_state_file(path)
+    record = group2.ledgers["b"].get(partial_id)
+    assert record.status == UNCERTAIN
+    assert record.confirmed_value == pytest.approx(partial_confirmed)
+
+    # 恢复后继续跑：新输入不覆盖恢复前已确认的执行事实。
+    run_n(6, group2, controller2, plant2, initial_step=4)
+    for cid, value in executed_before.items():
+        assert group2.ledgers["b"].get(cid).confirmed_value == \
+            pytest.approx(value)
+    record = group2.ledgers["b"].get(partial_id)
+    assert record.status == UNCERTAIN
+
+    # 迟到的累计完成回执仍归属原命令；重复投递不重复累计。
+    # 设备侧仍按原请求量执行完毕（能力重核只收缩控制器侧计划）。
+    action = partial_action
+    done = group2.deliver_receipt(Receipt(
+        command_id=partial_id, actuator="b", kind=EXEC_PARTIAL,
+        arrived_step=10, applied_value=action,
+    ))
+    assert not done.duplicate and not done.disputed
+    assert group2.ledgers["b"].get(partial_id).status == EXECUTED
+    dup = group2.deliver_receipt(Receipt(
+        command_id=partial_id, actuator="b", kind=EXEC_PARTIAL,
+        arrived_step=11, applied_value=action,
+    ))
+    assert dup.duplicate
+    assert group2.ledgers["b"].get(partial_id).confirmed_value == \
+        pytest.approx(action)
