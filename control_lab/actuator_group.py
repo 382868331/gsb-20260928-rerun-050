@@ -137,6 +137,20 @@ class ActuatorGroup:
         )
         return self.ledgers[name].ingest(receipt)
 
+    def register_correction(self, name: str, command_id: int, step: int,
+                            applied_value: float | None = None,
+                            fraction: float | None = None,
+                            detail: str = ""):
+        """显式登记独立的纠正事实决定（普通迟到回执不会自动纠正）。
+
+        返回纠正后的命令记录；纠正前后的状态、依据与剩余量在记录的
+        corrections 中逐项留痕，控制器可据此比较剩余控制能力。
+        """
+        return self.ledgers[name].register_correction(
+            command_id=int(command_id), step=int(step),
+            applied_value=applied_value, fraction=fraction, detail=detail,
+        )
+
     def reconnect(self, step: int, name: str | None = None) -> None:
         """执行器重连：断连命令保留原归属，未收到回执入总线，不重发。"""
         targets = [name] if name is not None else list(self.names)

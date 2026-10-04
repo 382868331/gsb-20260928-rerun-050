@@ -42,6 +42,21 @@
   数量与比例矛盾或累计量倒退时，记录 `disputed`/`dispute_detail`/
   `disputed_values` 保留争议双方并保持 `uncertain`，不静默选择任一数字。
   设备回执自带 `base_value`/`clipped_value`，数量与比例在同一基准上核对。
+  已确认的执行量（含部分确认）是不可回退的执行事实：执行器确认一部分
+  动作后迟到的更小累计回执（无论 `cumulative` 还是 `incremental`，正向、
+  负向动作统一按沿请求方向的有符号进展比较）只追加为争议证据
+  （`disputed_values`/`receipt.disputed`），不撤销 `confirmed_value`、
+  不重置 `remaining_value`、不改变状态；供控制决策使用的可能作用区间只从
+  已确认量向待核实余额方向延伸，绝不把更小的争议值纳入区间而把已发生
+  动作重新当成未发生。命令确认未发生（含取消/`not_received`）后迟到的
+  执行回执、或确认发生后迟到的取消回执同样只留争议，不能自动复活或撤销
+  事实。改写已确认事实必须显式登记独立的纠正决定（`manual_correction`/
+  `CommandLedger.register_correction`、`ActuatorGroup.register_correction`），
+  普通迟到回执不会自动完成纠正；纠正记录 `corrections` 逐项保留纠正前后
+  的状态、依据与剩余量，并可通过
+  `DualMPCController.compare_correction` 比较纠正前后的合力可达区间与剩余
+  控制能力。保存/恢复会持久化争议证据与纠正留痕，重开后同一份已执行事实
+  只计一次，恢复后再次投递的同一迟到回执仍标记 `duplicate`/`superseded`。
 - `control_lab/device_channel.py`：真实设备侧（FIFO 延迟、限幅、断连、部分
   执行）与 `ReceiptBus`（回执延迟、重复、丢失）。断连期间设备收不到命令，
   重连时只补一条 `not_received` 回执，不自动重发。

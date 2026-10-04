@@ -34,6 +34,9 @@ EXEC_PARTIAL = "executed_partial"
 NOT_RECEIVED = "not_received"
 MANUAL_EXECUTED = "manual_executed"
 MANUAL_NOT_APPLIED = "manual_not_applied"
+# 明确登记的“纠正事实”独立决定：只有它能够改写已经确认的执行事实，
+# 普通迟到回执（无论声称更大还是更小）都不能自动完成纠正。
+MANUAL_CORRECTION = "manual_correction"
 
 # 回执计量方式：incremental 表示只携带“新增”执行量，cumulative 表示
 # 携带截至目前的“累计”执行量。同一指令可能先收到增量回执、后收到累计
@@ -58,6 +61,7 @@ class Receipt:
     measure: str = MEASURE_CUMULATIVE
     duplicate: bool = False
     superseded: bool = False
+    disputed: bool = False
     detail: str = ""
 
     def to_dict(self) -> dict:
@@ -78,6 +82,7 @@ class Receipt:
             "measure": self.measure,
             "duplicate": bool(self.duplicate),
             "superseded": bool(self.superseded),
+            "disputed": bool(self.disputed),
             "detail": self.detail,
         }
 
@@ -96,6 +101,7 @@ class Receipt:
             measure=str(data.get("measure", MEASURE_CUMULATIVE)),
             duplicate=bool(data.get("duplicate", False)),
             superseded=bool(data.get("superseded", False)),
+            disputed=bool(data.get("disputed", False)),
             detail=str(data.get("detail", "")),
         )
 
@@ -117,6 +123,8 @@ class CommandRecord:
     disputed_values: list[float] | None = None
     manually_decided: bool = False
     planned_reschedule_id: int | None = None
+    # 显式纠正决定的逐项留痕：每条包含纠正前后的状态、依据与剩余量。
+    corrections: list[dict] | None = None
     note: str = ""
 
     @property
@@ -144,6 +152,8 @@ class CommandRecord:
                                 else [float(v) for v in self.disputed_values]),
             "manually_decided": bool(self.manually_decided),
             "planned_reschedule_id": self.planned_reschedule_id,
+            "corrections": (None if self.corrections is None
+                            else [dict(item) for item in self.corrections]),
             "note": self.note,
         }
 
@@ -165,6 +175,9 @@ class CommandRecord:
             disputed_values=data.get("disputed_values"),
             manually_decided=bool(data.get("manually_decided", False)),
             planned_reschedule_id=data.get("planned_reschedule_id"),
+            corrections=(data.get("corrections")
+                         and [dict(item)
+                              for item in data.get("corrections")]),
             note=str(data.get("note", "")),
         )
 
@@ -250,6 +263,14 @@ class CommandLedger:
             return receipt
 
         record = self._records[receipt.command_id]
+
+        # 显式纠正决定是唯一可以改写已确认事实的入口（即使此前已有
+        # 人工结论，也允许用新的独立决定再次纠正）；它必须显式携带
+        # 新的依据（applied_value 或 fraction），并逐项保留纠正前后事实。
+        if receipt.kind == MANUAL_CORRECTION:
+            self._ingest_correction(record, receipt)
+            return receipt
+
         if record.manually_decided:
             receipt.superseded = True
             return receipt
@@ -264,6 +285,19 @@ class CommandLedger:
             return receipt
 
         if receipt.kind == NOT_RECEIVED:
+            # 已经确认发生（含部分发生）后，迟到的“未收到/取消”回执
+            # 不能撤销执行事实：只作为争议证据保留，状态不回退。
+            if (record.status == EXECUTED
+                    or (record.status == UNCERTAIN
+                        and record.confirmed_value is not None
+                        and self._signed_progress(
+                            record, record.confirmed_value) > _VALUE_TOL)):
+                self._keep_dispute(
+                    record, receipt,
+                    "取消/未收到回执与已确认执行事实冲突",
+                    [float(record.confirmed_value)],
+                )
+                return receipt
             record.status = NOT_APPLIED
             baseline = float(record.hold_value)
             if receipt.applied_value is not None:
@@ -292,9 +326,38 @@ class CommandLedger:
 
         raise ValueError(f"未知回执种类: {receipt.kind}")
 
+    def register_correction(self, command_id: int, step: int,
+                            applied_value: float | None = None,
+                            fraction: float | None = None,
+                            detail: str = "") -> CommandRecord:
+        """显式登记一条独立的“纠正事实”决定并返回更新后的命令记录。
+
+        普通迟到回执不会触发纠正；只有通过本入口登记的独立决定才能
+        改写已确认的执行事实，纠正前后的依据与剩余量逐项留痕。
+        """
+        receipt = Receipt(
+            command_id=int(command_id), actuator=self.actuator,
+            kind=MANUAL_CORRECTION, arrived_step=int(step),
+            applied_value=(None if applied_value is None
+                           else float(applied_value)),
+            fraction=(None if fraction is None else float(fraction)),
+            detail=str(detail),
+        )
+        self.ingest(receipt)
+        return self._records[int(command_id)]
+
     # ------------------------------------------------------------------
     # 执行回执合并
     # ------------------------------------------------------------------
+    @staticmethod
+    def _signed_progress(record: CommandRecord, value: float) -> float:
+        """沿请求动作方向的有符号进展；负向动作同样可比大小。"""
+        direction = float(record.action) - float(record.hold_value)
+        if abs(direction) <= _VALUE_TOL:
+            return abs(float(value) - float(record.hold_value))
+        sign = 1.0 if direction > 0 else -1.0
+        return (float(value) - float(record.hold_value)) * sign
+
     def _execution_base(self, record: CommandRecord) -> float:
         """增量回执的累加基准：已确认的累计水平，否则保持值。"""
         if record.cumulative_value is not None:
@@ -303,17 +366,44 @@ class CommandLedger:
             return float(record.confirmed_value)
         return float(record.hold_value)
 
-    def _mark_dispute(self, record: CommandRecord, detail: str,
-                      values: list[float]) -> None:
-        """数量与比例矛盾或累计量倒退：保留争议双方，不静默选择。"""
+    def _keep_dispute(self, record: CommandRecord, receipt: Receipt,
+                      detail: str, values: list[float]) -> None:
+        """普通回执与事实/比例冲突：只追加争议证据，绝不改写已确认事实。"""
         record.disputed = True
         record.dispute_detail = detail
-        record.disputed_values = [float(v) for v in values]
+        receipt.disputed = True
+        existing = record.disputed_values or []
+        for value in values:
+            value = float(value)
+            if not any(abs(value - old) <= _VALUE_TOL for old in existing):
+                existing.append(value)
+        record.disputed_values = existing
+        # 状态、confirmed_value、remaining_value 全部保持不变：
+        # 已发生的动作不能因为一条迟到回执被重新当成未发生。
+
+    def _mark_internal_dispute(self, record: CommandRecord, detail: str,
+                               values: list[float]) -> None:
+        """尚没有任何已确认事实时的内部矛盾：状态保持不确定。"""
+        record.disputed = True
+        record.dispute_detail = detail
+        existing = record.disputed_values or []
+        for value in values:
+            value = float(value)
+            if not any(abs(value - old) <= _VALUE_TOL for old in existing):
+                existing.append(value)
+        record.disputed_values = existing
         record.status = UNCERTAIN
         base = record.confirmed_value
         if base is None:
             base = float(record.hold_value)
         record.remaining_value = float(record.action - base)
+
+    def _fact_confirmed_progress(self, record: CommandRecord) -> float:
+        if record.status == NOT_APPLIED:
+            return 0.0
+        if record.confirmed_value is None:
+            return 0.0
+        return self._signed_progress(record, record.confirmed_value)
 
     def _ingest_execution(self, record: CommandRecord,
                           receipt: Receipt) -> None:
@@ -321,6 +411,23 @@ class CommandLedger:
         hold = float(record.hold_value)
         manual = receipt.kind == MANUAL_EXECUTED
         measure = receipt.measure or MEASURE_CUMULATIVE
+
+        # 已经给出最终结论（人工核实）的命令：普通回执一律只留证据。
+        # 注意 manually_decided 的命令在 ingest 入口已被标记 superseded，
+        # 这里主要防御直接调用 _ingest_execution 的路径。
+
+        # 已经确认“未发生”（含取消）后，普通执行回执不能自动撤销该
+        # 结论；设备声称执行过，只能登记为争议，等待显式纠正决定。
+        if record.status == NOT_APPLIED and not manual:
+            claim_values: list[float] = []
+            if receipt.applied_value is not None:
+                claim_values.append(float(receipt.applied_value))
+            self._keep_dispute(
+                record, receipt,
+                "迟到执行回执与已确认未发生/取消结论冲突",
+                claim_values,
+            )
+            return
 
         # 分别由“已执行量”和“比例”推出候选绝对作用量；两者都在时互相核对。
         candidates: list[float] = []
@@ -360,32 +467,62 @@ class CommandLedger:
 
         if len(candidates) == 2 and \
                 abs(candidates[0] - candidates[1]) > _VALUE_TOL:
-            self._mark_dispute(
-                record,
-                "applied_value 与 fraction 矛盾",
-                candidates,
+            # 已经确认过部分/全部事实时，矛盾回执只留证据、不回退事实；
+            # 尚未有事实时维持不确定并保留争议双方。
+            if self._fact_confirmed_progress(record) > _VALUE_TOL:
+                self._keep_dispute(
+                    record, receipt,
+                    "applied_value 与 fraction 矛盾",
+                    candidates,
+                )
+            else:
+                self._mark_internal_dispute(
+                    record,
+                    "applied_value 与 fraction 矛盾",
+                    candidates,
             )
             return
 
         applied = float(candidates[0])
 
-        # 累计量倒退：后到的累计回执比已确认累计水平离目标更远。
-        if measure == MEASURE_CUMULATIVE and not manual and \
-                record.cumulative_value is not None:
-            direction = action - hold
-            if abs(direction) > _VALUE_TOL:
-                sign = 1.0 if direction > 0 else -1.0
-                old_progress = (float(record.cumulative_value) - hold) * sign
-                new_progress = (applied - hold) * sign
-                if new_progress < old_progress - _VALUE_TOL:
-                    self._mark_dispute(
-                        record,
-                        "累计量倒退",
-                        [float(record.cumulative_value), applied],
+        # 倒退回执（任何计量方式、正向/负向动作统一处理）：后到回执
+        # 声称的沿请求方向进展小于已确认事实时，只作为争议证据保留，
+        # 不覆盖 confirmed_value、不重置 remaining_value、不改变状态。
+        # 尚未有任何已确认事实时，倒退到保持值以外的说法也不能自动成立，
+        # 仍维持不确定。
+        if not manual:
+            old_progress = self._fact_confirmed_progress(record)
+            new_progress = self._signed_progress(record, applied)
+            if new_progress < old_progress - _VALUE_TOL:
+                if old_progress > _VALUE_TOL:
+                    self._keep_dispute(
+                        record, receipt, "执行量倒退",
+                        [float(record.confirmed_value), applied],
                     )
                     return
+                self._mark_internal_dispute(
+                    record, "执行量倒退",
+                    [float(record.confirmed_value
+                           if record.confirmed_value is not None else hold),
+                     applied],
+                )
+                return
 
-        record.cumulative_value = applied
+        # 普通回执只能沿请求方向推进或确认事实，不能撤销已确认量。
+        if not manual:
+            old_progress = self._fact_confirmed_progress(record)
+            new_progress = self._signed_progress(record, applied)
+            if record.status == EXECUTED:
+                # 与已确认水平不一致时只登记争议，改写必须走纠正决定。
+                if abs(new_progress - old_progress) > _VALUE_TOL:
+                    self._keep_dispute(
+                        record, receipt, "迟到回执与已确认事实冲突",
+                        [applied],
+                    )
+                return
+
+        if measure == MEASURE_CUMULATIVE:
+            record.cumulative_value = applied
         record.confirmed_value = applied
 
         if manual:
@@ -407,6 +544,65 @@ class CommandLedger:
             # 缺少比例绝不推断为全部完成。
             record.status = UNCERTAIN
             record.remaining_value = float(action - applied)
+
+    def _ingest_correction(self, record: CommandRecord,
+                           receipt: Receipt) -> None:
+        action = float(record.action)
+        hold = float(record.hold_value)
+
+        candidates: list[float] = []
+        if receipt.applied_value is not None:
+            candidates.append(float(receipt.applied_value))
+        if receipt.fraction is not None:
+            candidates.append(
+                hold + float(receipt.fraction) * (action - hold)
+            )
+        if not candidates:
+            raise ValueError(
+                "manual_correction must carry applied_value or fraction"
+            )
+        if len(candidates) == 2 and \
+                abs(candidates[0] - candidates[1]) > _VALUE_TOL:
+            raise ValueError("manual_correction value/fraction mismatch")
+        new_value = float(candidates[0])
+
+        old_status = str(record.status)
+        old_confirmed = (None if record.confirmed_value is None
+                         else float(record.confirmed_value))
+        old_remaining = (None if record.remaining_value is None
+                         else float(record.remaining_value))
+        old_detail = str(record.dispute_detail)
+
+        record.confirmed_value = new_value
+        record.cumulative_value = new_value
+        record.remaining_value = float(action - new_value)
+        full = abs(new_value - action) <= _VALUE_TOL
+        record.status = EXECUTED if full else UNCERTAIN
+        record.manually_decided = True
+        record.note = "manual_correction"
+        entry = {
+            "step": int(receipt.arrived_step),
+            "receipt_detail": str(receipt.detail),
+            "basis_value": float(new_value),
+            "basis_fraction": (None if receipt.fraction is None
+                               else float(receipt.fraction)),
+            "old_status": old_status,
+            "new_status": str(record.status),
+            "old_confirmed_value": old_confirmed,
+            "new_confirmed_value": float(new_value),
+            "old_remaining_value": old_remaining,
+            "new_remaining_value": float(record.remaining_value),
+            "resolved_dispute_detail": old_detail,
+            "resolved_disputed_values": (
+                None if record.disputed_values is None
+                else [float(v) for v in record.disputed_values]
+            ),
+        }
+        if record.corrections is None:
+            record.corrections = []
+        record.corrections.append(entry)
+        record.disputed = False
+        record.dispute_detail = "resolved_by_manual_correction"
 
     def receipts(self, include_duplicates: bool = True) -> list[Receipt]:
         if include_duplicates:
@@ -457,11 +653,15 @@ class CommandLedger:
         if record.status == NOT_APPLIED:
             return float(record.hold_value), float(record.hold_value)
         if record.status == UNCERTAIN:
-            points = [float(record.action)]
+            action = float(record.action)
             if record.confirmed_value is not None:
-                points.append(float(record.confirmed_value))
-            else:
-                points.append(float(record.hold_value))
+                # 已确认部分是执行事实：供控制决策使用的可能作用区间
+                # 只能从已确认量向“尚未核实的余额方向”延伸。倒退回执
+                # 声称的更小值只保存在争议证据里，绝不进入该区间，
+                # 已发生的动作不会被重新当成未发生（负向动作同理）。
+                confirmed = float(record.confirmed_value)
+                return min(confirmed, action), max(confirmed, action)
+            points = [float(record.hold_value), action]
             if record.disputed_values:
                 points.extend(float(v) for v in record.disputed_values)
             return min(points), max(points)

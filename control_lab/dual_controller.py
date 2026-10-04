@@ -22,6 +22,8 @@ u_a + u_b 驱动同一目标。控制器为每条命令保留原命令归属（�
 
 from __future__ import annotations
 
+import copy
+
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -146,6 +148,89 @@ class DualMPCController:
                     record.action = requested
                     # 已实际执行的量（含部分执行的已发生部分）是事实，
                     # 不随能力重核改写；待核实余额也保持原记录。
+
+    # ------------------------------------------------------------------
+    # 纠正事实前后的依据与剩余控制能力比较
+    # ------------------------------------------------------------------
+    def _reachable_summary(
+        self,
+        obs: np.ndarray,
+        target: float,
+        ledgers: dict[str, CommandLedger],
+        current_step: int,
+    ) -> dict:
+        projections = {
+            name: self.project_channel(
+                name, ledgers[name], COMPENSATE, current_step=int(current_step)
+            )
+            for name in self.names
+        }
+        envelope, forces = self.envelope_rollout(
+            np.asarray(obs, dtype=float).reshape(2), projections
+        )
+        return {
+            "reachable_target_min": float(envelope[-1, 0, 0]),
+            "reachable_target_max": float(envelope[-1, 0, 1]),
+            "target_attainable": bool(
+                envelope[-1, 0, 0] - 1e-7 <= target
+                <= envelope[-1, 0, 1] + 1e-7
+            ),
+            "force_first_step_min": float(forces[0, 0]),
+            "force_first_step_max": float(forces[0, 1]),
+        }
+
+    def compare_correction(
+        self,
+        obs: np.ndarray,
+        target: float,
+        ledgers: dict[str, CommandLedger],
+        name: str,
+        command_id: int,
+        current_step: int = 0,
+    ) -> dict:
+        """比较最近一次显式纠正前后的依据与剩余控制能力。
+
+        “纠正前”依据来自命令记录的 corrections 留痕（不依赖纠正动作
+        本身是否还能重放），“纠正后”使用当前台账与当前能力实时投影；
+        两者都给出已确认依据、剩余未核实量和合力可达区间，普通迟到
+        回执不会产生这里的比较项——只有显式纠正决定才会。
+        """
+        ledger = ledgers[name]
+        record = ledger.get(command_id)
+        if not record.corrections:
+            raise ValueError("该命令没有显式纠正决定，无法比较纠正前后")
+        correction = dict(record.corrections[-1])
+
+        after = self._reachable_summary(
+            obs, target, ledgers, current_step=current_step
+        )
+
+        shadow = {channel: copy.deepcopy(led) for channel, led in ledgers.items()}
+        shadow_record = shadow[name].get(command_id)
+        shadow_record.status = correction["old_status"]
+        shadow_record.confirmed_value = correction["old_confirmed_value"]
+        shadow_record.remaining_value = correction["old_remaining_value"]
+        shadow_record.corrections = list(record.corrections[:-1])
+        before = self._reachable_summary(
+            obs, target, shadow, current_step=current_step
+        )
+
+        confirmed_delta = 0.0
+        if correction["old_confirmed_value"] is not None:
+            confirmed_delta = (
+                float(correction["new_confirmed_value"])
+                - float(correction["old_confirmed_value"])
+            )
+        return {
+            "actuator": name,
+            "command_id": int(command_id),
+            "correction": correction,
+            "confirmed_value_delta": float(confirmed_delta),
+            "remaining_value_before": correction["old_remaining_value"],
+            "remaining_value_after": correction["new_remaining_value"],
+            "reachable_before": before,
+            "reachable_after": after,
+        }
 
     # ------------------------------------------------------------------
     # 台账 -> 时域区间投影

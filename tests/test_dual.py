@@ -18,6 +18,7 @@ from control_lab.command_ledger import (
     IN_FLIGHT,
     MEASURE_CUMULATIVE,
     MEASURE_INCREMENTAL,
+    NOT_RECEIVED,
     NOT_APPLIED,
     QUEUED,
     UNCERTAIN,
@@ -442,3 +443,269 @@ def test_save_resume_after_partial_receipt_preserves_execution_facts(tmp_path):
     # 已生效命令不会因保存/重开再次施加。
     queued_ids = {c.command_id for c in group2.channels["b"].pending_commands()}
     assert original.command_id not in queued_ids
+
+
+# ---------------------------------------------------------------------
+# 倒退回执、取消后迟到回执、显式纠正决定（follow-up）
+# ---------------------------------------------------------------------
+
+def test_regressive_receipt_after_full_execution_keeps_fact_and_evidence():
+    ledger = make_ledger(action=1.0, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_FULL, arrived_step=1,
+        applied_value=1.0, measure=MEASURE_CUMULATIVE,
+    ))
+    record = ledger.get(1)
+    assert record.status == EXECUTED
+
+    # 迟到的累计回执声称只执行了更小数量：已发生事实不被撤销。
+    late = ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=3,
+        applied_value=0.7, measure=MEASURE_CUMULATIVE,
+    ))
+    assert late.disputed
+    assert record.status == EXECUTED
+    assert record.confirmed_value == pytest.approx(1.0)
+    assert record.remaining_value == pytest.approx(0.0)
+    assert record.disputed and 0.7 in record.disputed_values
+    # 供控制决策使用的可能作用区间不纳入更小值。
+    lo, hi = ledger.possible_effect_interval(record)
+    assert lo == hi == pytest.approx(1.0)
+
+    # 再来一条同样的迟到回执：同一事实只计一次（仍标记 duplicate）。
+    again = ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=4,
+        applied_value=0.7, measure=MEASURE_CUMULATIVE,
+    ))
+    assert again.duplicate
+
+
+def test_regressive_receipt_after_partial_confirmation_keeps_fact():
+    ledger = make_ledger(action=1.0, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=1,
+        applied_value=0.8, measure=MEASURE_CUMULATIVE,
+    ))
+    # 迟到的更小累计量：已确认 0.8 保留，争议只留证据，状态仍是
+    # “部分已确认、余额待核实”，决策区间从 0.8 向请求量 1.0 延伸。
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=2,
+        applied_value=0.3, measure=MEASURE_CUMULATIVE,
+    ))
+    record = ledger.get(1)
+    assert record.status == UNCERTAIN
+    assert record.confirmed_value == pytest.approx(0.8)
+    assert record.remaining_value == pytest.approx(0.2)
+    lo, hi = ledger.possible_effect_interval(record)
+    assert lo == pytest.approx(0.8) and hi == pytest.approx(1.0)
+
+
+def test_regressive_receipt_negative_action_uses_signed_progress():
+    # 负向动作：动作 -1.0、保持值 0.0；-0.8 的进展大于 -0.3，
+    # 后到的 -0.3 是倒退，不能撤销已经确认的 -0.8。
+    ledger = make_ledger(action=-1.0, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=1,
+        applied_value=-0.8, measure=MEASURE_CUMULATIVE,
+    ))
+    late = ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=2,
+        applied_value=-0.3, measure=MEASURE_CUMULATIVE,
+    ))
+    record = ledger.get(1)
+    assert late.disputed
+    assert record.confirmed_value == pytest.approx(-0.8)
+    assert record.remaining_value == pytest.approx(-0.2)
+    lo, hi = ledger.possible_effect_interval(record)
+    assert lo == pytest.approx(-1.0) and hi == pytest.approx(-0.8)
+
+    # 沿负向继续推进的合法回执仍被接受。
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_FULL, arrived_step=3,
+        applied_value=-1.0, measure=MEASURE_CUMULATIVE,
+    ))
+    assert ledger.get(1).status == EXECUTED
+
+
+def test_late_execution_receipt_after_cancellation_kept_as_dispute_only():
+    ledger = make_ledger(action=1.0, hold=0.0)
+    # 命令被确认取消/未发生（设备 not_received 或人工确认）。
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=NOT_RECEIVED, arrived_step=1,
+    ))
+    assert ledger.get(1).status == NOT_APPLIED
+    # 取消后迟到的“其实执行了”回执不能自动复活命令。
+    late = ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=4,
+        applied_value=0.6, measure=MEASURE_CUMULATIVE,
+    ))
+    record = ledger.get(1)
+    assert late.disputed
+    assert record.status == NOT_APPLIED
+    assert record.disputed and 0.6 in record.disputed_values
+    lo, hi = ledger.possible_effect_interval(record)
+    assert lo == hi == pytest.approx(0.0)
+
+    # 反向顺序同样成立：已确认发生后，迟到的取消回执不能撤销事实。
+    ledger2 = make_ledger(action=1.0, hold=0.0)
+    ledger2.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_FULL, arrived_step=1,
+        applied_value=1.0,
+    ))
+    cancel = ledger2.ingest(Receipt(
+        command_id=1, actuator="a", kind=NOT_RECEIVED, arrived_step=3,
+    ))
+    assert cancel.disputed
+    assert ledger2.get(1).status == EXECUTED
+
+
+def test_explicit_correction_is_an_independent_decision_with_basis():
+    ledger = make_ledger(action=1.0, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_FULL, arrived_step=1,
+        applied_value=1.0, measure=MEASURE_CUMULATIVE,
+    ))
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=2,
+        applied_value=0.5, measure=MEASURE_CUMULATIVE,
+    ))
+    record = ledger.get(1)
+    assert record.status == EXECUTED  # 普通迟到回执没有纠正事实
+
+    # 只有显式登记的独立纠正决定才能改写事实，并逐项保留纠正前后依据。
+    corrected = ledger.register_correction(
+        1, 3, applied_value=0.5, detail="site_recheck"
+    )
+    assert corrected.status == UNCERTAIN
+    assert corrected.confirmed_value == pytest.approx(0.5)
+    assert corrected.remaining_value == pytest.approx(0.5)
+    assert corrected.manually_decided and not corrected.disputed
+    entry = corrected.corrections[-1]
+    assert entry["old_status"] == EXECUTED
+    assert entry["new_status"] == UNCERTAIN
+    assert entry["old_confirmed_value"] == pytest.approx(1.0)
+    assert entry["new_confirmed_value"] == pytest.approx(0.5)
+    assert entry["old_remaining_value"] == pytest.approx(0.0)
+    assert entry["new_remaining_value"] == pytest.approx(0.5)
+    assert 0.5 in entry["resolved_disputed_values"]
+
+    # 纠正后普通迟到回执仍然不能再次自动改写。
+    late = ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=4,
+        applied_value=0.9, measure=MEASURE_CUMULATIVE,
+    ))
+    assert late.superseded
+    assert ledger.get(1).confirmed_value == pytest.approx(0.5)
+
+    # 纠正决定必须携带新依据。
+    with pytest.raises(ValueError):
+        ledger.register_correction(1, 5)
+
+
+def test_dual_actuators_regression_and_correction_capability_compare():
+    plant, controller, group, _ = make_components(policy=COMPENSATE)
+    run_n(4, group, controller, plant)
+    ledgers = group.ledgers
+
+    # 两台执行器各自最近一条已确认命令；各自注入倒退回执，互不串账。
+    targets = {}
+    for name in ("a", "b"):
+        record = ledgers[name].confirmed_occurred()[-1]
+        targets[name] = record
+        smaller = record.confirmed_value - 0.3 * (
+            record.action - record.hold_value
+        )
+        late = group.deliver_receipt(Receipt(
+            command_id=record.command_id, actuator=name,
+            kind=EXEC_PARTIAL, arrived_step=5,
+            applied_value=smaller, measure=MEASURE_CUMULATIVE,
+        ))
+        assert late.disputed
+        assert ledgers[name].get(record.command_id).status == EXECUTED
+        assert ledgers[name].get(record.command_id).confirmed_value == \
+            pytest.approx(record.confirmed_value)
+
+    obs = plant.get_observation()
+    # 纠正前：全部事实保留，目标可达性按已确认量计算。
+    before_plan = controller.plan(obs, 1.0, ledgers, current_step=5)
+    # 倒退回执声称的更小值没有进入任何已确认命令的决策区间。
+    for executed in ledgers["a"].confirmed_occurred():
+        lo, hi = ledgers["a"].possible_effect_interval(executed)
+        assert lo == hi == pytest.approx(executed.confirmed_value)
+
+    # 显式登记 a 通道的纠正决定（0.3 倍请求量），比较纠正前后能力。
+    record_a = targets["a"]
+    group.register_correction(
+        "a", record_a.command_id, 5,
+        applied_value=record_a.hold_value
+        + 0.3 * (record_a.action - record_a.hold_value),
+        detail="joint_investigation",
+    )
+    comparison = controller.compare_correction(
+        obs, 1.0, ledgers, "a", record_a.command_id, current_step=5
+    )
+    assert comparison["remaining_value_before"] == pytest.approx(0.0)
+    assert comparison["remaining_value_after"] == pytest.approx(
+        0.7 * (record_a.action - record_a.hold_value)
+    )
+    assert comparison["correction"]["basis_value"] == pytest.approx(
+        record_a.hold_value + 0.3 * (record_a.action - record_a.hold_value)
+    )
+    # 纠正后 a 通道重新出现待核实余额，可能作用区间重新变宽。
+    after_plan = controller.plan(obs, 1.0, ledgers, current_step=5)
+    assert comparison["reachable_after"]["reachable_target_min"] == \
+        pytest.approx(after_plan.reachable_target_min)
+    assert comparison["reachable_after"]["reachable_target_max"] == \
+        pytest.approx(after_plan.reachable_target_max)
+    assert comparison["reachable_after"]["target_attainable"] == \
+        after_plan.target_attainable
+    # b 通道事实不受 a 通道纠正影响。
+    assert ledgers["b"].get(targets["b"].command_id).status == EXECUTED
+
+
+def test_save_resume_counts_executed_fact_once_with_regression(tmp_path):
+    plant, controller, group, _ = make_components()
+    run_n(4, group, controller, plant)
+    record = group.ledgers["a"].confirmed_occurred()[-1]
+    confirmed_before = float(record.confirmed_value)
+    # 取消后迟到的执行回执 + 更小累计量，都只作争议证据。
+    group.deliver_receipt(Receipt(
+        command_id=record.command_id, actuator="a", kind=NOT_RECEIVED,
+        arrived_step=5,
+    ))
+    group.deliver_receipt(Receipt(
+        command_id=record.command_id, actuator="a", kind=EXEC_PARTIAL,
+        arrived_step=5,
+        applied_value=confirmed_before - 0.4,
+        measure=MEASURE_CUMULATIVE,
+    ))
+    # 显式纠正决定也要在重开后保持只计一次。
+    group.register_correction(
+        "a", record.command_id, 5,
+        applied_value=confirmed_before - 0.2, detail="recheck",
+    )
+    path = group.save_state(tmp_path / "state.json")
+
+    plant2, controller2, group2, _ = make_components(bus=ReceiptBus())
+    group2.load_state_file(path)
+    controller2.update_capabilities(group2.capabilities(), group2.ledgers)
+    restored = group2.ledgers["a"].get(record.command_id)
+    assert restored.confirmed_value == pytest.approx(confirmed_before - 0.2)
+    assert len(restored.corrections) == 1
+    # 已执行事实在恢复后只计一次：confirmed_actions 不重复累计。
+    facts = [r for r in group2.ledgers["a"].confirmed_occurred()]
+    ids = [r.command_id for r in facts]
+    assert len(ids) == len(set(ids))
+
+    run_n(6, group2, controller2, plant2, initial_step=5)
+    after = group2.ledgers["a"].get(record.command_id)
+    assert after.confirmed_value == pytest.approx(confirmed_before - 0.2)
+    assert len(after.corrections) == 1
+    # 恢复后再次投递同一条迟到回执仍只归档为重复，不会再次计入。
+    dup = group2.deliver_receipt(Receipt(
+        command_id=record.command_id, actuator="a", kind=EXEC_PARTIAL,
+        arrived_step=12,
+        applied_value=confirmed_before - 0.4,
+        measure=MEASURE_CUMULATIVE,
+    ))
+    assert dup.duplicate or dup.superseded
