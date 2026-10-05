@@ -291,6 +291,152 @@ def make_ledger(action=1.0, hold=0.0):
     return ledger
 
 
+def make_ledger_for(actuator, action=2.5, hold=0.0):
+    ledger = CommandLedger(actuator)
+    ledger.register(1, action, submitted_step=0, due_step=0, hold_value=hold)
+    return ledger
+
+
+@pytest.mark.parametrize("actuator", ["a", "b"])
+def test_not_received_after_partial_confirmation_keeps_confirmed_fact(actuator):
+    # 动作 2.5 已确认 1.5 后，设备未接收通知不能清零已发生事实，
+    # 也不能恢复全部剩余 2.5，矛盾通知只留作争议。
+    ledger = make_ledger_for(actuator, action=2.5, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator=actuator, kind=EXEC_PARTIAL, arrived_step=1,
+        applied_value=1.5, measure=MEASURE_CUMULATIVE,
+    ))
+    notice = ledger.ingest(Receipt(
+        command_id=1, actuator=actuator, kind="not_received", arrived_step=2,
+    ))
+    record = ledger.get(1)
+    assert notice.superseded
+    assert record.status == UNCERTAIN
+    assert record.confirmed_value == pytest.approx(1.5)
+    assert record.remaining_value == pytest.approx(1.0)
+    assert record.disputed
+    assert record.disputed_values == pytest.approx([1.5, 0.0])
+    lo, hi = ledger.possible_effect_interval(record)
+    assert lo == pytest.approx(1.5)
+    assert hi == pytest.approx(2.5)
+
+
+def test_not_received_after_partial_confirmation_negative_action():
+    ledger = make_ledger_for("a", action=-2.5, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=1,
+        applied_value=-1.5, measure=MEASURE_CUMULATIVE,
+    ))
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind="not_received", arrived_step=2,
+    ))
+    record = ledger.get(1)
+    assert record.status == UNCERTAIN
+    assert record.confirmed_value == pytest.approx(-1.5)
+    assert record.remaining_value == pytest.approx(-1.0)
+    assert record.disputed_values == pytest.approx([-1.5, 0.0])
+    lo, hi = ledger.possible_effect_interval(record)
+    assert lo == pytest.approx(-2.5)
+    assert hi == pytest.approx(-1.5)
+
+
+def test_not_received_and_regressive_receipt_both_stay_disputes():
+    # 已确认 1.5 后，未接收通知与迟到累计 0.5 都只是争议证据。
+    ledger = make_ledger_for("a", action=2.5, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=1,
+        applied_value=1.5, measure=MEASURE_CUMULATIVE,
+    ))
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind="not_received", arrived_step=2,
+    ))
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=3,
+        applied_value=0.5, measure=MEASURE_CUMULATIVE,
+    ))
+    record = ledger.get(1)
+    assert record.status == UNCERTAIN
+    assert record.confirmed_value == pytest.approx(1.5)
+    assert record.remaining_value == pytest.approx(1.0)
+    assert record.disputed
+    lo, hi = ledger.possible_effect_interval(record)
+    assert lo == pytest.approx(1.5)
+    assert hi == pytest.approx(2.5)
+
+
+def test_duplicate_not_received_does_not_double_count():
+    ledger = make_ledger_for("a", action=2.5, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=1,
+        applied_value=1.5, measure=MEASURE_CUMULATIVE,
+    ))
+    first = ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind="not_received", arrived_step=2,
+    ))
+    second = ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind="not_received", arrived_step=3,
+    ))
+    record = ledger.get(1)
+    assert not first.duplicate
+    assert second.duplicate
+    assert record.confirmed_value == pytest.approx(1.5)
+    assert record.remaining_value == pytest.approx(1.0)
+    assert record.disputed_values == pytest.approx([1.5, 0.0])
+
+
+def test_not_received_conflict_survives_save_and_resume():
+    ledger = make_ledger_for("b", action=2.5, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="b", kind=EXEC_PARTIAL, arrived_step=1,
+        applied_value=1.5, measure=MEASURE_CUMULATIVE,
+    ))
+    ledger.ingest(Receipt(
+        command_id=1, actuator="b", kind="not_received", arrived_step=2,
+    ))
+    state = ledger.to_state()
+
+    restored = CommandLedger("b")
+    restored.load_state(state)
+    record = restored.get(1)
+    assert record.status == UNCERTAIN
+    assert record.confirmed_value == pytest.approx(1.5)
+    assert record.remaining_value == pytest.approx(1.0)
+    assert record.disputed
+    assert record.disputed_values == pytest.approx([1.5, 0.0])
+    lo, hi = restored.possible_effect_interval(record)
+    assert lo == pytest.approx(1.5)
+    assert hi == pytest.approx(2.5)
+    # 恢复后重复投递同一通知仍只标记 duplicate，不再次改变事实。
+    again = restored.ingest(Receipt(
+        command_id=1, actuator="b", kind="not_received", arrived_step=3,
+    ))
+    assert again.duplicate
+    assert record.confirmed_value == pytest.approx(1.5)
+
+
+def test_only_explicit_correction_adjusts_fact_after_not_received():
+    ledger = make_ledger_for("a", action=2.5, hold=0.0)
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind=EXEC_PARTIAL, arrived_step=1,
+        applied_value=1.5, measure=MEASURE_CUMULATIVE,
+    ))
+    ledger.ingest(Receipt(
+        command_id=1, actuator="a", kind="not_received", arrived_step=2,
+    ))
+    correction = ledger.register_correction(
+        step=3, command_id=1, applied_value=0.5,
+        reason="independent_investigation",
+    )
+    record = ledger.get(1)
+    assert correction["before"]["confirmed_value"] == pytest.approx(1.5)
+    assert correction["after"]["confirmed_value"] == pytest.approx(0.5)
+    assert record.confirmed_value == pytest.approx(0.5)
+    assert record.remaining_value == pytest.approx(2.0)
+    assert record.status == UNCERTAIN
+    assert not record.disputed
+    assert record.manually_decided
+
+
 def test_partial_receipt_without_fraction_keeps_remaining_balance():
     # 只携带已执行量、没有比例的回执不能记成全部执行。
     ledger = make_ledger(action=1.0, hold=0.0)

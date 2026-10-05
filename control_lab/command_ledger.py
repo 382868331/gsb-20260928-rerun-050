@@ -280,6 +280,10 @@ class CommandLedger:
             return receipt
 
         if receipt.kind == NOT_RECEIVED:
+            if record.confirmed_value is not None or \
+                    record.cumulative_value is not None:
+                self._record_not_received_conflict(record, receipt)
+                return receipt
             record.status = NOT_APPLIED
             baseline = float(record.hold_value)
             if receipt.applied_value is not None:
@@ -308,6 +312,31 @@ class CommandLedger:
             return receipt
 
         raise ValueError(f"未知回执种类: {receipt.kind}")
+
+    def _record_not_received_conflict(self, record: CommandRecord,
+                                      receipt: Receipt) -> None:
+        """已有部分执行事实时，未接收通知只作争议证据保留。
+
+        已确认的发生量与待核实余额保持不变，不能恢复全部剩余量；
+        只有显式登记的纠正决定才能调整事实。
+        """
+        current = float(
+            record.confirmed_value
+            if record.confirmed_value is not None
+            else record.cumulative_value
+        )
+        claimed = float(
+            receipt.applied_value
+            if receipt.applied_value is not None
+            else record.hold_value
+        )
+        receipt.superseded = True
+        if abs(claimed - current) <= _VALUE_TOL:
+            return
+        record.disputed = True
+        record.dispute_detail = "未接收通知与已确认执行事实矛盾"
+        record.disputed_values = [current, claimed]
+        record.remaining_value = float(record.action - current)
 
     # ------------------------------------------------------------------
     # 执行回执合并
