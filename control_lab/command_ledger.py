@@ -257,6 +257,19 @@ class CommandLedger:
             self._accepted_kinds[key] = receipt.arrived_step
         self._receipts.append(receipt)
         if receipt.duplicate:
+            original_step = self._accepted_kinds.get(key)
+            original = next(
+                (item for item in self._receipts[:-1]
+                 if not item.duplicate and item.arrived_step == original_step
+                 and item.command_id == receipt.command_id
+                 and item.kind == receipt.kind
+                 and item.measure == receipt.measure
+                 and item.applied_value == receipt.applied_value
+                 and item.fraction == receipt.fraction),
+                None,
+            )
+            if original is not None:
+                receipt.superseded = original.superseded
             return receipt
 
         record = self._records[receipt.command_id]
@@ -269,6 +282,14 @@ class CommandLedger:
             self._record_conflicting_settled_fact(record, receipt)
             if receipt.superseded:
                 return receipt
+
+        if receipt.kind == NOT_RECEIVED and record.status == UNCERTAIN \
+                and record.cumulative_value is not None:
+            self._record_conflicting_settled_fact(
+                record, receipt,
+                dispute_detail="部分执行后收到冲突的未接收通知",
+            )
+            return receipt
 
         if receipt.kind == ACK:
             # ack 只在命令已到生效时刻且没有执行/未收到事实时改变信念；
@@ -364,9 +385,11 @@ class CommandLedger:
             candidates.append(action)
         return candidates
 
-    def _record_conflicting_settled_fact(self, record: CommandRecord,
-                                         receipt: Receipt) -> None:
-        """终态后的普通迟到回执只作争议证据，不撤销已确认事实。"""
+    def _record_conflicting_settled_fact(
+        self, record: CommandRecord, receipt: Receipt,
+        dispute_detail: str | None = None,
+    ) -> None:
+        """已建立执行事实后的普通迟到回执只作争议证据。"""
         claimed: list[float] = []
         if receipt.kind in (EXEC_FULL, EXEC_PARTIAL, MANUAL_EXECUTED):
             claimed = self._receipt_candidates(record, receipt)
@@ -379,14 +402,24 @@ class CommandLedger:
             receipt.superseded = True
             return
         current = float(record.confirmed_value)
-        if all(abs(value - current) <= _VALUE_TOL for value in claimed):
+        if dispute_detail is None and all(
+            abs(value - current) <= _VALUE_TOL for value in claimed
+        ):
             receipt.superseded = True
             return
         receipt.superseded = True
-        values = [current] + claimed
+        values = [current] if record.disputed_values is None \
+            else list(record.disputed_values)
+        values.extend(float(value) for value in claimed
+                      if all(abs(value - old) > _VALUE_TOL
+                             for old in values))
         record.disputed = True
-        record.dispute_detail = "终态后收到冲突的迟到回执"
+        record.dispute_detail = (
+            dispute_detail or "终态后收到冲突的迟到回执"
+        )
         record.disputed_values = [float(v) for v in values]
+        if dispute_detail is not None:
+            record.remaining_value = float(record.action - current)
 
     def _ingest_execution(self, record: CommandRecord,
                           receipt: Receipt) -> None:
@@ -434,11 +467,12 @@ class CommandLedger:
                 old_progress = (float(record.cumulative_value) - hold) * sign
                 new_progress = (applied - hold) * sign
                 if new_progress < old_progress - _VALUE_TOL:
-                    self._mark_dispute(
-                        record,
-                        "累计量倒退",
-                        [float(record.cumulative_value), applied],
-                        status=record.status,
+                    self._record_conflicting_settled_fact(
+                        record, receipt,
+                        dispute_detail=(
+                            record.dispute_detail + "；累计量倒退"
+                            if record.disputed else "累计量倒退"
+                        ),
                     )
                     return
 

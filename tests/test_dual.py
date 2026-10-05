@@ -19,6 +19,7 @@ from control_lab.command_ledger import (
     MEASURE_CUMULATIVE,
     MEASURE_INCREMENTAL,
     NOT_APPLIED,
+    NOT_RECEIVED,
     QUEUED,
     UNCERTAIN,
     CommandLedger,
@@ -427,6 +428,87 @@ def test_late_receipt_after_cancellation_is_dispute_evidence_only():
     assert record.disputed_values == pytest.approx([0.2, 0.7])
     assert ledger.possible_effect_interval(record) == pytest.approx(
         (0.2, 0.2)
+    )
+
+
+def test_conflicting_not_received_after_partial_execution_keeps_fact(tmp_path):
+    ledgers = {
+        "a": CommandLedger("a"),
+        "b": CommandLedger("b"),
+    }
+    cases = {
+        "a": (2.5, 1.5, 0.5, 0.7),
+        "b": (-2.5, -1.5, -0.5, -0.7),
+    }
+    for name, (action, confirmed_value, late_value, corrected_value) in cases.items():
+        ledgers[name].register(
+            1, action, submitted_step=0, due_step=0, hold_value=0.0
+        )
+        ledgers[name].mark_due(0)
+        ledgers[name].ingest(Receipt(
+            command_id=1, actuator=name, kind=EXEC_PARTIAL,
+            arrived_step=1, applied_value=confirmed_value,
+            measure=MEASURE_CUMULATIVE,
+        ))
+
+        state = ledgers[name].to_state()
+        restored = CommandLedger(name)
+        restored.load_state(state)
+        path = tmp_path / f"{name}_state.json"
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(state, handle)
+        with open(path, encoding="utf-8") as handle:
+            restored.load_state(json.load(handle))
+        ledgers[name] = restored
+
+        not_received = ledgers[name].ingest(Receipt(
+            command_id=1, actuator=name, kind=NOT_RECEIVED,
+            arrived_step=2,
+        ))
+        duplicate = ledgers[name].ingest(Receipt(
+            command_id=1, actuator=name, kind=NOT_RECEIVED,
+            arrived_step=3,
+        ))
+        late = ledgers[name].ingest(Receipt(
+            command_id=1, actuator=name, kind=EXEC_PARTIAL,
+            arrived_step=4, applied_value=late_value,
+            measure=MEASURE_CUMULATIVE,
+        ))
+
+        record = ledgers[name].get(1)
+        assert not_received.superseded
+        assert duplicate.duplicate
+        assert duplicate.superseded
+        assert late.superseded
+        assert record.status == UNCERTAIN
+        assert record.confirmed_value == pytest.approx(confirmed_value)
+        assert record.remaining_value == pytest.approx(
+            action - confirmed_value
+        )
+        assert record.disputed
+        assert "未接收通知" in record.dispute_detail
+        assert record.disputed_values == pytest.approx(
+            [confirmed_value, 0.0, late_value]
+        )
+        assert ledgers[name].possible_effect_interval(record) == pytest.approx(
+            (min(confirmed_value, action), max(confirmed_value, action))
+        )
+
+    ledgers["a"].register_correction(
+        step=5, command_id=1, applied_value=cases["a"][3],
+        reason="independent_investigation",
+    )
+    corrected_a = ledgers["a"].get(1)
+    assert corrected_a.confirmed_value == pytest.approx(cases["a"][3])
+    assert corrected_a.remaining_value == pytest.approx(
+        cases["a"][0] - cases["a"][3]
+    )
+    assert not corrected_a.disputed
+
+    unchanged_b = ledgers["b"].get(1)
+    assert unchanged_b.confirmed_value == pytest.approx(cases["b"][1])
+    assert unchanged_b.remaining_value == pytest.approx(
+        cases["b"][0] - cases["b"][1]
     )
 
 
